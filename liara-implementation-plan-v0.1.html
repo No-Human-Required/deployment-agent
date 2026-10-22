@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>طرح پیاده‌سازی «همراه لیارا» — نسخه ۰٫۱</title>
+  <style>
+
+@font-face {
+  font-family: "Vazirmatn";
+  src: url("fonts/vazirmatn/Vazirmatn-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Vazirmatn";
+  src: url("fonts/vazirmatn/Vazirmatn-Medium.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Vazirmatn";
+  src: url("fonts/vazirmatn/Vazirmatn-SemiBold.woff2") format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Vazirmatn";
+  src: url("fonts/vazirmatn/Vazirmatn-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --ink: #1a1f2e;
+  --muted: #4a5568;
+  --line: #d8dee9;
+  --surface: #f7f9fc;
+  --accent: #0d7377;
+  --accent-soft: #e6f4f4;
+  --callout: #fff8e7;
+  --callout-border: #e6c35c;
+  --thead: #0d7377;
+  --thead-text: #ffffff;
+  --page: #ffffff;
+}
+
+* { box-sizing: border-box; }
+
+html { font-size: 11pt; }
+
+body {
+  margin: 0;
+  padding: 0;
+  background: #e8edf3;
+  color: var(--ink);
+  font-family: "Vazirmatn", "Vazir", Tahoma, sans-serif;
+  line-height: 1.85;
+  direction: rtl;
+  text-align: right;
+  -webkit-font-smoothing: antialiased;
+}
+
+.page {
+  max-width: 210mm;
+  margin: 24px auto;
+  padding: 18mm 16mm 20mm;
+  background: var(--page);
+  box-shadow: 0 8px 32px rgba(26, 31, 46, 0.08);
+  position: relative;
+}
+
+.page::before {
+  content: "";
+  display: block;
+  height: 6px;
+  margin: -6mm -4mm 12mm;
+  border-radius: 10px 10px 0 0;
+  background: linear-gradient(90deg, #0a4d4f 0%, #0d7377 50%, #14919b 100%);
+}
+
+h1 {
+  font-size: 1.85rem;
+  font-weight: 700;
+  line-height: 1.35;
+  margin: 0 0 1.15em;
+  color: var(--ink);
+  padding-bottom: 0.45em;
+  border-bottom: 3px solid var(--accent);
+}
+
+h2 {
+  font-size: 1.32rem;
+  font-weight: 700;
+  margin: 2em 0 0.75em;
+  padding: 0.4em 0.8em;
+  color: #063a3c;
+  background: var(--accent-soft);
+  border-right: 4px solid var(--accent);
+  border-radius: 0 6px 6px 0;
+  page-break-after: avoid;
+  break-after: avoid;
+}
+
+h3 {
+  font-size: 1.12rem;
+  font-weight: 700;
+  margin: 1.55em 0 0.55em;
+  color: var(--accent);
+  page-break-after: avoid;
+  break-after: avoid;
+}
+
+h4, h5, h6 {
+  font-size: 1.02rem;
+  font-weight: 700;
+  margin: 1.25em 0 0.45em;
+  color: #234e52;
+  page-break-after: avoid;
+}
+
+p {
+  margin: 0 0 0.85em;
+  text-align: justify;
+}
+
+strong {
+  font-weight: 700;
+  color: #0a3d40;
+}
+
+em { font-style: italic; }
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px dotted rgba(13, 115, 119, 0.45);
+  word-break: break-word;
+}
+
+ul, ol {
+  margin: 0 0 1em;
+  padding: 0 1.45em 0 0;
+}
+
+li { margin: 0.28em 0; }
+li::marker { color: var(--accent); }
+
+p.callout {
+  margin: 1.1em 0 1.25em;
+  padding: 14px 16px;
+  background: var(--callout);
+  border: 1px solid var(--callout-border);
+  border-right: 4px solid #c9a227;
+  border-radius: 8px;
+}
+
+p.callout strong {
+  color: #3d3208;
+  font-weight: 700;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.9em 0 1.3em;
+  font-size: 0.88rem;
+  line-height: 1.65;
+}
+
+thead th {
+  background: var(--thead);
+  color: var(--thead-text);
+  font-weight: 700;
+  text-align: right;
+  padding: 10px 12px;
+  border: 1px solid #0a5c5f;
+}
+
+tbody td {
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  vertical-align: top;
+  background: #fff;
+}
+
+tbody tr:nth-child(even) td { background: var(--surface); }
+tbody tr { page-break-inside: avoid; break-inside: avoid; }
+
+code {
+  font-family: "Vazirmatn", ui-monospace, monospace;
+  font-size: 0.88em;
+  direction: ltr;
+  unicode-bidi: isolate;
+  background: #eef2f7;
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+}
+
+pre {
+  direction: ltr;
+  text-align: left;
+  background: #1a1f2e;
+  color: #e8edf3;
+  padding: 12px 14px;
+  border-radius: 8px;
+  overflow-x: auto;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  white-space: pre;
+}
+
+hr {
+  border: none;
+  border-top: 1px solid var(--line);
+  margin: 2em 0;
+}
+
+.print-hint {
+  max-width: 210mm;
+  margin: 16px auto 0;
+  padding: 10px 14px;
+  font-size: 0.85rem;
+  color: var(--muted);
+  text-align: center;
+  font-family: "Vazirmatn", "Vazir", Tahoma, sans-serif;
+  direction: rtl;
+}
+
+@media print {
+  @page {
+    size: A4;
+    margin: 14mm 12mm 16mm;
+  }
+  html { font-size: 10pt; }
+  body { background: #fff; }
+  .page {
+    max-width: none;
+    margin: 0;
+    padding: 0;
+    box-shadow: none;
+  }
+  .page::before {
+    margin: 0 0 8mm;
+    border-radius: 0;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .print-hint { display: none !important; }
+  h2, thead th, p.callout, tbody tr:nth-child(even) td {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  a { color: inherit; border-bottom: none; }
+  h2, h3 { break-after: avoid; }
+  table, tr { break-inside: avoid; }
+}
+
+@media screen and (max-width: 720px) {
+  .page { margin: 0; padding: 18px 16px 28px; }
+  table { display: block; overflow-x: auto; }
+}
+
+</style>
+</head>
+<body>
+  <p class="print-hint">برای PDF: چاپ مرورگر → Save as PDF · مرجع: <a href="liara-prd-v0.3.html">PRD نسخه ۰٫۳</a></p>
+  <article class="page">
+
+    <h1>طرح پیاده‌سازی محصول «همراه لیارا»</h1>
+
+    <h2>مشخصات سند</h2>
+    <table>
+      <thead><tr><th>مشخصه</th><th>مقدار</th></tr></thead>
+      <tbody>
+        <tr><td>نسخه</td><td>۰٫۱</td></tr>
+        <tr><td>تاریخ</td><td>۲۲ اکتبر ۲۰۲۶؛ منطقه زمانی تهران</td></tr>
+        <tr><td>مرجع محصول</td><td><a href="liara-prd-v0.3.md">PRD نسخه ۰٫۳</a></td></tr>
+        <tr><td>مخاطب</td><td>مهندسی، محصول، QA، مسئول عملیات</td></tr>
+        <tr><td>وضعیت</td><td>پیشنهادی برای ساخت؛ پیاده‌سازی در این سند انجام نشده است</td></tr>
+        <tr><td>منبع API</td><td><a href="https://developers.liara.ir/">developers.liara.ir</a>، <a href="https://developers.liara.ir/llms.txt">llms.txt</a>، <a href="https://docs.liara.ir/references/api/about/">docs API</a></td></tr>
+      </tbody>
+    </table>
+
+    <p class="callout"><strong>هدف این سند:</strong> تبدیل دامنه کامل PRD به ترتیب ساخت، معماری اجرایی، رجیستری قابلیت، و معیار Done هر فاز — بدون کوچک‌کردن دامنه محصول.</p>
+
+    <p>دامنه PRD کامل می‌ماند. فازها فقط <strong>اولویت تحویل</strong> هستند. قابلیت ساخته‌نشده یا آزموده‌نشده باید در رجیستری <code>disabled</code> یا <code>documented</code> بماند، نه «کامل» اعلام شود.</p>
+
+    <hr />
+
+    <h2>۱. هدف و قواعد غیرقابل مذاکره</h2>
+    <p>حلقه محصول (از PRD):</p>
+    <p><strong>هدف ← شاهد ← طرح ← اجازه ← اقدام ← سنجش ← بازیابی / ادامه</strong></p>
+
+    <table>
+      <thead><tr><th>قاعده</th><th>معنی عملی</th></tr></thead>
+      <tbody>
+        <tr><td>کنترل اجازه</td><td>هیچ نوشتن حساسی بدون طرح مشخص + اجازه معتبر</td></tr>
+        <tr><td>راز</td><td>توکن و credential به مدل، لاگ محصول، گزارش، URL و telemetry نرود</td></tr>
+        <tr><td>پاسخ نامعلوم</td><td>بعد از timeout نوشتن، فقط تطبیق خواندنی؛ بدون retry کور</td></tr>
+        <tr><td>رجیستری قابلیت</td><td>مستند ≠ آزموده ≠ فعال برای کاربر</td></tr>
+        <tr><td>کانال اصلی</td><td>وب فارسی / RTL؛ CLI/MCP اختیاری‌اند</td></tr>
+        <tr><td>نتیجه واقعی</td><td>HTTP 200 یا پذیرش درخواست کافی نیست؛ نسخه + کارکرد</td></tr>
+      </tbody>
+    </table>
+
+    <h2>۲. معماری منطقی</h2>
+    <pre>┌─────────────────────────────────────────────────────────┐
+│  Web UI (فارسی/RTL) — Case, Plan, Approval, Status     │
+└───────────────────────────┬─────────────────────────────┘
+                            │
+┌───────────────────────────▼─────────────────────────────┐
+│  API Gateway / BFF                                      │
+│  auth · tenant · role · secret refs · no secrets in AI  │
+└───┬──────────┬──────────┬──────────┬──────────┬─────────┘
+    │          │          │          │          │
+┌───▼───┐ ┌───▼────┐ ┌───▼────┐ ┌───▼────┐ ┌───▼──────┐
+│ Case  │ │ Plan / │ │ AI     │ │ Ops    │ │ Verify / │
+│ Store │ │ Approve│ │ Orch.  │ │ Engine │ │ Monitor  │
+└───────┘ └────────┘ └────┬───┘ └───┬────┘ └──────────┘
+                          │         │
+                    ┌─────▼──┐ ┌────▼────────────────────┐
+                    │Sanitize│ │ Adapters                 │
+                    │+Schema │ │ Liara PaaS·DBaaS·DNS·Git │
+                    └────────┘ │ Sandbox (build/test/patch)│
+                               └──────────────────────────┘</pre>
+
+    <h3>پیشنهاد پشته</h3>
+    <table>
+      <thead><tr><th>لایه</th><th>پیشنهاد شروع</th><th>دلیل</th></tr></thead>
+      <tbody>
+        <tr><td>Frontend</td><td>Next.js + RTL</td><td>مسیر وب فارسی، یک ریپو</td></tr>
+        <tr><td>Backend / BFF</td><td>TypeScript یا Python</td><td>هم‌راستا با آداپتورهای اصلی</td></tr>
+        <tr><td>صف و کارگر</td><td>Redis + worker</td><td>checkpoint، بازیابی crash</td></tr>
+        <tr><td>پایگاه داده</td><td>PostgreSQL</td><td>Case / Plan / Audit نسخه‌دار</td></tr>
+        <tr><td>راز</td><td>مخزن رمزشده + مرجع امن</td><td>L-R02</td></tr>
+        <tr><td>Sandbox</td><td>container ایزوله</td><td>L-R18، L-AC46</td></tr>
+        <tr><td>AI</td><td>مدل + JSON Schema</td><td>متن مدل ≠ فرمان API</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Base URL سرویس‌های لیارا</h3>
+    <table>
+      <thead><tr><th>سرویس</th><th>Base URL</th></tr></thead>
+      <tbody>
+        <tr><td>PaaS و DBaaS</td><td><code>https://api.liara.ir</code></td></tr>
+        <tr><td>DNS</td><td><code>https://dns-service.liara.ir</code></td></tr>
+        <tr><td>Object Storage</td><td><code>https://storage-service.liara.ir</code></td></tr>
+        <tr><td>Mail</td><td><code>https://mail-service.liara.ir</code></td></tr>
+        <tr><td>IaaS</td><td><code>https://iaas-api.liara.ir</code></td></tr>
+        <tr><td>AI لیارا (اختیاری)</td><td><code>https://ai.liara.ir</code></td></tr>
+      </tbody>
+    </table>
+    <p>احراز هویت: <code>Authorization: Bearer &lt;TOKEN&gt;</code>؛ برای تیم پارامتر <code>teamID</code> لازم است.</p>
+
+    <h2>۳. فازبندی ساخت</h2>
+
+    <h3>فاز ۰ — قرارداد، اسکلت، رجیستری</h3>
+    <p><strong>هدف:</strong> زیرساخت امن و فقط‌خواندنی روی حساب آزمون.</p>
+    <table>
+      <thead><tr><th>کار</th><th>الزام / تصمیم</th></tr></thead>
+      <tbody>
+        <tr><td>محیط آزمون، API token، teamID</td><td>L-D01</td></tr>
+        <tr><td>مدل داده Workspace / Case / Audit</td><td>L-R02، L-R10، L-R21</td></tr>
+        <tr><td>مخزن راز + پالایش پیش از مدل</td><td>L-R02، بخش ۱۰ PRD</td></tr>
+        <tr><td>کلاینت HTTP با طبقه‌بندی خطا</td><td>قواعد پایداری بخش ۹</td></tr>
+        <tr><td>Capability Registry</td><td>بخش ۱۱ PRD</td></tr>
+        <tr><td>اثبات خواندن me و projects</td><td>L-D01</td></tr>
+      </tbody>
+    </table>
+    <p><strong>Done:</strong> توکن نامعتبر و فقط‌خواندنی درست fail شوند؛ راز در لاگ/مدل نباشد.</p>
+
+    <h3>فاز ۱ — اولین انتشار قابل استفاده (هسته L-M01)</h3>
+    <p><strong>هدف:</strong> از بسته/Git تا URL قابل استفاده روی یک آداپتور اول (پیشنهاد: Node.js یا Next.js).</p>
+    <table>
+      <thead><tr><th>ماژول</th><th>کار</th><th>API لیارا</th><th>الزام / AC</th></tr></thead>
+      <tbody>
+        <tr><td>ورودی</td><td>بسته یا Git → نسخه ثابت</td><td>—</td><td>L-R03، L-R14</td></tr>
+        <tr><td>ارزیابی</td><td>manifest، start، port، env</td><td>—</td><td>L-R03، L-AC05</td></tr>
+        <tr><td>طرح</td><td>مقصد، پلن، هزینه</td><td>billing/me</td><td>L-R04، L-R19</td></tr>
+        <tr><td>اجازه</td><td>Approval مقید به hash</td><td>—</td><td>L-R05، L-AC08–10</td></tr>
+        <tr><td>ساخت برنامه</td><td>اگر نیست</td><td><code>POST /v1/projects</code></td><td>L-R11، L-AC22</td></tr>
+        <tr><td>استقرار</td><td>source → release</td><td>sources، releases</td><td>L-R06، L-AC08، ۱۱، ۱۲</td></tr>
+        <tr><td>سنجش</td><td>نسخه + کارکرد</td><td>releases + HTTP</td><td>L-R09، L-AC16</td></tr>
+        <tr><td>UI</td><td>خانه تا نتیجه</td><td>—</td><td>بخش ۵، L-AC19</td></tr>
+      </tbody>
+    </table>
+    <p><strong>Done:</strong> L-AC01، ۰۳–۰۵، ۰۷–۱۲، ۱۶، ۲۰، ۲۲ روی یک آداپتور.</p>
+
+    <h3>فاز ۲ — انتشار مجدد، تنظیمات، دامنه</h3>
+    <table>
+      <thead><tr><th>کار</th><th>API</th><th>الزام / AC</th></tr></thead>
+      <tbody>
+        <tr><td>تفاوت نسخه / migration</td><td>—</td><td>L-R03، L-AC06</td></tr>
+        <tr><td>env با merge/replace اثبات‌شده</td><td>update-envs</td><td>L-R12، L-D03، L-AC23، ۳۶</td></tr>
+        <tr><td>restart / resize</td><td>restart، resize</td><td>L-R08، L-R12، L-R19، L-AC33</td></tr>
+        <tr><td>دامنه + SSL</td><td>domains، SSL</td><td>L-R13، L-AC24، ۳۸</td></tr>
+        <tr><td>DNS تحت اختیار</td><td>dns-service</td><td>L-R13، L-D09</td></tr>
+        <tr><td>handoff ثبت‌کننده</td><td>UI</td><td>L-AC18</td></tr>
+        <tr><td>ادامه نشست / checkpoint</td><td>—</td><td>L-R06، L-AC32، ۳۵</td></tr>
+      </tbody>
+    </table>
+
+    <h3>فاز ۳ — اختلال تا اصلاح مستقیم</h3>
+    <table>
+      <thead><tr><th>کار</th><th>API</th><th>الزام / AC</th></tr></thead>
+      <tbody>
+        <tr><td>جمع شواهد</td><td>logs، events، metrics</td><td>L-R07، L-AC13–14</td></tr>
+        <tr><td>تشخیص ساختاریافته</td><td>AI + schema</td><td>L-R07، بخش ۸</td></tr>
+        <tr><td>اصلاح env/اجرا/restart/resize</td><td>PaaS + DBaaS</td><td>L-R08، L-AC15، ۱۷</td></tr>
+        <tr><td>سنجش قبل/بعد</td><td>—</td><td>L-R09، L-AC34</td></tr>
+      </tbody>
+    </table>
+
+    <h3>فاز ۴ — وابستگی و داده ماندگار</h3>
+    <table>
+      <thead><tr><th>کار</th><th>API</th><th>الزام / AC</th></tr></thead>
+      <tbody>
+        <tr><td>کشف نیاز DB/Redis/دیسک</td><td>—</td><td>L-R17</td></tr>
+        <tr><td>ساخت پایگاه</td><td><code>POST /v1/databases</code></td><td>L-R17، L-D05، L-AC43</td></tr>
+        <tr><td>دیسک و بکاپ</td><td>disks</td><td>L-R17، L-AC44</td></tr>
+      </tbody>
+    </table>
+
+    <h3>فاز ۵ — وصله کد و sandbox</h3>
+    <table>
+      <thead><tr><th>کار</th><th>وابستگی</th><th>الزام / AC</th></tr></thead>
+      <tbody>
+        <tr><td>تولید diff محدود</td><td>AI + schema</td><td>L-R18</td></tr>
+        <tr><td>اعمال روی branch/کپی</td><td>Git</td><td>L-R14، L-D07</td></tr>
+        <tr><td>build/test ایزوله</td><td>L-D08</td><td>L-AC37، L-AC46</td></tr>
+        <tr><td>اجازه جدا ثبت ≠ انتشار</td><td>—</td><td>L-R18، L-AC39</td></tr>
+      </tbody>
+    </table>
+
+    <h3>فاز ۶ — پایش، بازیابی، همکاری، چندپلتفرم</h3>
+    <ul>
+      <li>پایش دوره‌ای و ادغام هشدار — L-R15، L-AC26، ۴۰، ۴۱</li>
+      <li>RecoveryBaseline — L-R20، L-AC48</li>
+      <li>نقش و ممیزی — L-R21، L-AC45، ۴۹</li>
+      <li>آداپتورهای بخش ۷ PRD — L-R16، L-AC27، ۴۲</li>
+      <li>بودجه و سقف — L-R19، L-AC47</li>
+      <li>بستن L-AC28 تا L-AC50 و چک‌لیست بخش ۱۷ PRD</li>
+    </ul>
+
+    <h2>۴. نقشه موجودیت → فاز ورود</h2>
+    <table>
+      <thead><tr><th>موجودیت</th><th>فاز</th><th>نکته</th></tr></thead>
+      <tbody>
+        <tr><td>Workspace / Target</td><td>۰</td><td><code>workspace_id</code> اجباری</td></tr>
+        <tr><td>Case</td><td>۰–۱</td><td>هدف، قیود، معیار، مسئول</td></tr>
+        <tr><td>ProjectVersion</td><td>۱</td><td>commit/hash ثابت</td></tr>
+        <tr><td>Evidence / Diagnosis</td><td>۱ اسکلت / ۳ کامل</td><td>نسخه‌دار</td></tr>
+        <tr><td>Plan / Approval / Operation</td><td>۱</td><td>hash، fingerprint، unknown</td></tr>
+        <tr><td>Verification</td><td>۱</td><td>موفق / بی‌اثر / بدتر / ناکافی</td></tr>
+        <tr><td>RecoveryBaseline</td><td>۲–۶</td><td>قبل از نوشتن حساس</td></tr>
+        <tr><td>Monitor / Incident</td><td>۶</td><td>پایش ≠ اجازه تغییر</td></tr>
+        <tr><td>Audit / Handoff</td><td>۰–۲</td><td>پالایش‌شده</td></tr>
+      </tbody>
+    </table>
+
+    <h2>۵. رجیستری قابلیت</h2>
+    <p>وضعیت‌ها: <code>documented</code> | <code>tested</code> | <code>enabled</code> | <code>disabled</code></p>
+    <table>
+      <thead><tr><th>ابزار</th><th>شروع</th><th>شرط فعال‌سازی</th></tr></thead>
+      <tbody>
+        <tr><td>list/get projects</td><td>tested در فاز ۰</td><td>خواندن واقعی</td></tr>
+        <tr><td>create project</td><td>documented</td><td>L-AC22 + نام تکراری + timeout</td></tr>
+        <tr><td>sources + releases</td><td>documented</td><td>L-AC08، ۱۱، ۱۲، ۳۲</td></tr>
+        <tr><td>update-envs</td><td>documented</td><td>L-D03؛ وگرنه disabled</td></tr>
+        <tr><td>restart / resize</td><td>documented</td><td>سنجش سلامت بعد از عمل</td></tr>
+        <tr><td>domains + ssl</td><td>documented</td><td>L-AC24</td></tr>
+        <tr><td>dns records</td><td>documented</td><td>فقط zone تحت اختیار</td></tr>
+        <tr><td>create database / disk</td><td>documented</td><td>L-D05</td></tr>
+        <tr><td>native rollback / cancel</td><td>ناموجود شفاف</td><td>بازانتشار / stop گام بعد</td></tr>
+        <tr><td>Irnic / پرداخت</td><td>خارج دامنه</td><td>handoff</td></tr>
+      </tbody>
+    </table>
+
+    <h2>۶. الگوریتم عملیات ماندگار</h2>
+    <ol>
+      <li>اعتبارسنجی مقصد، نقش، اجازه، hash طرح، سقف هزینه — بدون نوشتن در صورت شکست.</li>
+      <li>ثبت قصد و fingerprint <strong>قبل</strong> از HTTP.</li>
+      <li>قفل منبع متأثر.</li>
+      <li>فراخوانی ارائه‌دهنده.</li>
+      <li>checkpoint فوری شناسه provider.</li>
+      <li>timeout → <code>unknown</code> → فقط reconcile خواندنی.</li>
+      <li>Verification با معیار از پیش ثبت‌شده.</li>
+      <li>شکست میانی: منابع باقی در Case؛ حذف جبرانی فقط با اجازه.</li>
+    </ol>
+
+    <h2>۷. قرارداد داخلی BFF</h2>
+    <table>
+      <thead><tr><th>فرمان</th><th>فاز</th><th>خروجی</th></tr></thead>
+      <tbody>
+        <tr><td><code>assess_readiness</code></td><td>۱</td><td>یافته شاهددار، پیش‌نیاز</td></tr>
+        <tr><td><code>create_plan</code> / <code>approve_plan</code></td><td>۱</td><td>planVersion / approval</td></tr>
+        <tr><td><code>execute_plan</code> / <code>continue_or_stop</code></td><td>۱</td><td>operation و state</td></tr>
+        <tr><td><code>verify_result</code></td><td>۱</td><td>verification</td></tr>
+        <tr><td><code>collect_evidence</code> / <code>diagnose</code></td><td>۳</td><td>evidence / diagnosis</td></tr>
+        <tr><td><code>create_patch</code></td><td>۵</td><td>diff و محدودیت آزمون</td></tr>
+        <tr><td><code>enable_monitor</code></td><td>۶</td><td>monitor قابل توقف</td></tr>
+      </tbody>
+    </table>
+
+    <h2>۸. مسیرهای UI الزامی فاز ۱</h2>
+    <ol>
+      <li>خانه پروژه‌ها</li>
+      <li>شروع هدف: انتشار اول | نسخه جدید | اختلال | سلامت</li>
+      <li>آمادگی فایل‌محور</li>
+      <li>کارت طرح</li>
+      <li>اجازه: رد / ویرایش / تأیید</li>
+      <li>اجرای گام‌به‌گام</li>
+      <li>نتیجه یا نیاز باز + مسئول قدم بعد</li>
+    </ol>
+    <p>موبایل از ۳۶۰px، کیبورد، RTL؛ کد و diff در جزیره LTR.</p>
+
+    <h2>۹. استراتژی آزمون</h2>
+    <table>
+      <thead><tr><th>لایه</th><th>محتوا</th></tr></thead>
+      <tbody>
+        <tr><td>واحد</td><td>پالایش راز، hash طرح، نقش، fingerprint</td></tr>
+        <tr><td>قرارداد</td><td>mock OpenAPI + پاسخ طلایی</td></tr>
+        <tr><td>یکپارچه</td><td>حساب واقعی برچسب‌دار؛ یک آداپتور در فاز ۱</td></tr>
+        <tr><td>آشوب</td><td>قطع POST، کلیک تکراری، انقضای اجازه، crash کارگر</td></tr>
+        <tr><td>پذیرش</td><td>L-AC01 تا L-AC50؛ تکرار آداپتور طبق L-AC42</td></tr>
+      </tbody>
+    </table>
+
+    <h2>۱۰. تصمیم‌های باز — ترتیب بستن</h2>
+    <table>
+      <thead><tr><th>اولویت</th><th>شناسه</th><th>بدون آن</th></tr></thead>
+      <tbody>
+        <tr><td>P0</td><td>L-D01</td><td>فقط محیط آزمایشی برچسب‌دار</td></tr>
+        <tr><td>P0</td><td>L-D02</td><td>استقرار با وضعیت نامعلوم زیاد</td></tr>
+        <tr><td>P0</td><td>L-D08</td><td>بدون اجرای کد کاربر روی میزبان</td></tr>
+        <tr><td>P1</td><td>L-D03</td><td>ابزار env روی برنامه موجود off</td></tr>
+        <tr><td>P1</td><td>L-D05</td><td>ساخت DB/دیسک off</td></tr>
+        <tr><td>P1</td><td>L-D07 / L-D09</td><td>Git محدود / دامنه محدود</td></tr>
+        <tr><td>P2</td><td>L-D04، L-D06، L-D10–12</td><td>هزینه نامعلوم، آداپتور کمتر، پذیرش سخت‌تر</td></tr>
+      </tbody>
+    </table>
+
+    <h2>۱۱. نقشه نیاز PRD → API لیارا</h2>
+    <table>
+      <thead><tr><th>نیاز</th><th>پوشش API</th><th>یادداشت</th></tr></thead>
+      <tbody>
+        <tr><td>برنامه، deploy، restart، پلن</td><td>بله — PaaS</td><td>هسته فاز ۱–۲</td></tr>
+        <tr><td>لاگ، رویداد، متریک</td><td>بله</td><td>شاهد عیب‌یابی</td></tr>
+        <tr><td>env</td><td>بله</td><td>merge/replace باید ثابت شود</td></tr>
+        <tr><td>دامنه و SSL</td><td>بله</td><td>پذیرش ≠ پایان</td></tr>
+        <tr><td>DNS لیارا</td><td>بله</td><td>ثبت‌کننده خارج است</td></tr>
+        <tr><td>DB / Redis / دیسک</td><td>بله — مستند</td><td>فعال پس از L-D05</td></tr>
+        <tr><td>billing</td><td>جزئی</td><td>quote کامل فرض نشود</td></tr>
+        <tr><td>rollback / cancel / ایرنیک</td><td>خیر یا نامشخص</td><td>بازانتشار / stop / handoff</td></tr>
+      </tbody>
+    </table>
+
+    <h2>۱۲. نقش‌ها و تحویلی‌ها</h2>
+    <table>
+      <thead><tr><th>نقش</th><th>تمرکز</th></tr></thead>
+      <tbody>
+        <tr><td>محصول</td><td>Case UX، کارت طرح، Done فازها</td></tr>
+        <tr><td>Backend</td><td>Ops engine، adapters، secrets</td></tr>
+        <tr><td>Frontend</td><td>RTL، وضعیت‌های بخش ۵</td></tr>
+        <tr><td>AI</td><td>تشخیص و وصله با schema</td></tr>
+        <tr><td>QA / Ops</td><td>AC، آشوب، حساب لیارا</td></tr>
+      </tbody>
+    </table>
+    <p>تحویلی کنار کد: manifest آداپتور، معماری، راهنمای اتصال، گزارش AC، ویدیو دمو ~۵ دقیقه.</p>
+
+    <h2>۱۳. ترتیب پیشنهادی دمو</h2>
+    <ol>
+      <li>ساخت برنامه و انتشار واقعی</li>
+      <li>رد اجازه و صفر نوشتن</li>
+      <li>اختلال → اصلاح → قبل/بعد</li>
+      <li>در صورت آمادگی: وصله + آزمون</li>
+      <li>timeout نوشتن با رفتار نامعلوم درست</li>
+      <li>دامنه یا handoff ثبت‌کننده</li>
+    </ol>
+
+    <h2>۱۴. ریسک‌های اصلی</h2>
+    <table>
+      <thead><tr><th>ریسک</th><th>کاهش</th></tr></thead>
+      <tbody>
+        <tr><td>رفتار واقعی با docs فرق دارد</td><td>proof روی حساب قبل از enable</td></tr>
+        <tr><td>نبود exactly-once</td><td>intent + fingerprint + reconcile</td></tr>
+        <tr><td>مدل فرمان جعلی می‌سازد</td><td>allowlist + schema</td></tr>
+        <tr><td>دامنه کامل برای زمان محدود</td><td>فاز ۱–۲ برای دمو؛ بقیه شفاف در رجیستری</td></tr>
+      </tbody>
+    </table>
+
+    <h2>۱۵. تعریف تکمیل نسبت به PRD</h2>
+    <p>این طرح وقتی هم‌راستا با محصول کامل است که چک‌لیست بخش ۱۷ PRD و سناریوهای L-AC01 تا L-AC50 با شواهد پاس شوند. تکمیل یک فاز به معنی تکمیل کل محصول نیست.</p>
+    <p>مرجع دامنه همیشه <a href="liara-prd-v0.3.md">liara-prd-v0.3.md</a> است. در تعارض رفتار، PRD اولویت دارد مگر تصمیم محصولی نسخه‌دار جایگزین شود.</p>
+
+    <h2>۱۶. منابع</h2>
+    <ul>
+      <li><a href="liara-prd-v0.3.md">PRD همراه لیارا نسخه ۰٫۳</a> · <a href="liara-prd-v0.3.html">نسخه HTML</a></li>
+      <li><a href="https://developers.liara.ir/">Liara OpenAPI Docs</a></li>
+      <li><a href="https://developers.liara.ir/llms.txt">فهرست صفحات API</a></li>
+      <li><a href="https://docs.liara.ir/references/api/about/">مستندات Liara API</a></li>
+      <li>تصمیم‌های L-D01 تا L-D12 و الزامات L-R01 تا L-R21 در PRD</li>
+    </ul>
+
+  </article>
+</body>
+</html>
