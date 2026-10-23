@@ -93,6 +93,25 @@ describe("challenge loop routing", () => {
     });
   });
 
+  it("routes composer deploy-check / status prompts to troubleshoot (not deploy)", () => {
+    expect(
+      resolveChallengeLoopRoute("وضعیت آخرین استقرار و سلامت سرویس را بررسی کن"),
+    ).toEqual({
+      area: "troubleshoot",
+      mode: "intake",
+      intakeKind: "troubleshoot",
+    });
+    expect(
+      resolveChallengeLoopRoute("Check the latest deployment and service health", {
+        selectedServiceId: "shop-api",
+      }),
+    ).toEqual({
+      area: "troubleshoot",
+      mode: "troubleshoot",
+      projectName: "shop-api",
+    });
+  });
+
   it("routes maintain monitor CTA to enable path (or service intake)", () => {
     expect(
       resolveChallengeLoopRoute("Enable a maintain monitor for this workspace", {

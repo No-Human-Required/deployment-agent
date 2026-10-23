@@ -36,10 +36,118 @@ export function planReadyAssistantText(
   return "I have a proposed plan ready. Use Approve on the plan card to execute — chat text is not authorization.";
 }
 
-/** Useful outcome after verify — state only, no operation UUID spam. */
-export function verificationAssistantText(language: Locale, state: string): string {
+const FAIL_STATES = new Set([
+  "verify_failed",
+  "blocked",
+  "deps_blocked",
+  "deps_partial",
+  "unknown",
+  "handoff",
+]);
+
+function verificationDetail(
+  language: Locale,
+  state: string,
+  checkpoint?: Record<string, unknown> | null,
+): string | null {
+  const verification =
+    checkpoint && typeof checkpoint.verification === "object" && checkpoint.verification
+      ? (checkpoint.verification as Record<string, unknown>)
+      : null;
+  const openNeeds = Array.isArray(checkpoint?.open_needs)
+    ? (checkpoint?.open_needs as unknown[]).map(String)
+    : [];
+
   if (language === "fa") {
+    if (state === "verify_failed") {
+      const bits: string[] = [];
+      if (verification?.release_ok === false) {
+        bits.push("انتشار در لیارا تأیید نشد");
+      }
+      if (verification?.http_ok === false) {
+        const status = verification.http_status;
+        bits.push(
+          typeof status === "number"
+            ? `پاسخ HTTP سرویس ناموفق بود (${status})`
+            : "پاسخ HTTP سرویس ناموفق بود",
+        );
+      }
+      if (verification?.blocked_by_dependencies) {
+        bits.push("پیش‌نیازهای وابستگی هنوز باز هستند");
+      }
+      if (openNeeds.some((n) => /dependenc/i.test(n))) {
+        bits.push("احتمالاً دیتابیس یا دیسک به اپ وصل نیست");
+      }
+      if (bits.length) return bits.join("؛ ") + ".";
+      return "راستی‌آزمایی ناموفق بود؛ الان علت را از لاگ و وضعیت سرویس بررسی می‌کنم.";
+    }
+    if (state === "blocked" || state === "deps_blocked") {
+      return "اجرا کامل نشد چون پیش‌نیازها باز مانده‌اند.";
+    }
+    return null;
+  }
+
+  if (state === "verify_failed") {
+    const bits: string[] = [];
+    if (verification?.release_ok === false) bits.push("release was not confirmed");
+    if (verification?.http_ok === false) {
+      const status = verification.http_status;
+      bits.push(
+        typeof status === "number" ? `HTTP check failed (${status})` : "HTTP check failed",
+      );
+    }
+    if (verification?.blocked_by_dependencies) bits.push("dependency prerequisites are still open");
+    if (openNeeds.some((n) => /dependenc/i.test(n))) {
+      bits.push("database or disk may not be wired to the app");
+    }
+    if (bits.length) return `${bits.join("; ")}.`;
+    return "Verification failed; I’ll inspect logs and service status next.";
+  }
+  if (state === "blocked" || state === "deps_blocked") {
+    return "Execution did not complete because prerequisites are still open.";
+  }
+  return null;
+}
+
+/** Useful outcome after verify — explain failures; no operation UUID spam. */
+export function verificationAssistantText(
+  language: Locale,
+  state: string,
+  checkpoint?: Record<string, unknown> | null,
+): string {
+  const detail = verificationDetail(language, state, checkpoint);
+  if (language === "fa") {
+    if (FAIL_STATES.has(state)) {
+      return detail
+        ? `اجرا تمام شد اما نتیجه تأیید نشد (${state}). ${detail}`
+        : `اجرا تمام شد اما نتیجه تأیید نشد (${state}).`;
+    }
     return `اجرا انجام شد. وضعیت نهایی: ${state}.`;
   }
+  if (FAIL_STATES.has(state)) {
+    return detail
+      ? `Execution finished but verification did not succeed (${state}). ${detail}`
+      : `Execution finished but verification did not succeed (${state}).`;
+  }
   return `Execution finished. Final state: ${state}.`;
+}
+
+export function verificationNeedsTroubleshoot(state: string): boolean {
+  return FAIL_STATES.has(state);
+}
+
+/** Project name from an operation checkpoint after deploy/ops execute. */
+export function projectNameFromOperationCheckpoint(
+  checkpoint?: Record<string, unknown> | null,
+): string | null {
+  if (!checkpoint || typeof checkpoint !== "object") return null;
+  const providerIds =
+    checkpoint.provider_ids && typeof checkpoint.provider_ids === "object"
+      ? (checkpoint.provider_ids as Record<string, unknown>)
+      : null;
+  const fromProvider = providerIds?.project_name;
+  if (typeof fromProvider === "string" && fromProvider.trim()) return fromProvider.trim();
+  const direct = checkpoint.project_name;
+  if (typeof direct === "string" && direct.trim()) return direct.trim();
+  return null;
 }

@@ -553,6 +553,30 @@ export const readinessAssessmentSchema = z.object({
   findings: z.array(findingPayloadSchema).default([]),
   detected_port: z.number().nullable().optional(),
   start_script: z.string().nullable().optional(),
+  required_dependencies: z.array(z.string()).default([]),
+  dependency_summary: z.string().nullable().optional(),
+  existing_databases: z.array(z.string()).default([]),
+});
+
+/** GenUI dependency_plan from discover_dependencies / case constraints. */
+export const dependencyPlanSchema = z.object({
+  version: z.string().min(1),
+  summary: z.string().nullable().optional(),
+  required_kinds: z.array(z.string()).default([]),
+  findings: z
+    .array(
+      z.object({
+        kind: z.string(),
+        code: z.string(),
+        message: z.string(),
+        severity: z.string().default("error"),
+      }),
+    )
+    .default([]),
+  create_database_enabled: z.boolean().default(false),
+  create_disk_enabled: z.boolean().default(false),
+  open_needs: z.array(z.string()).default([]),
+  can_claim_complete_success: z.boolean().default(false),
 });
 
 export const planStepSchema = z.object({
@@ -775,6 +799,7 @@ export const orchestratorRunSchema = z.object({
   summary: z.string(),
   readiness: readinessAssessmentSchema.nullable().optional(),
   intake: orchestratorIntakeSchema.nullable().optional(),
+  dependency_plan: dependencyPlanSchema.nullable().optional(),
   evidence: evidencePackSchema.nullable().optional(),
   diagnosis: diagnosisSchema.nullable().optional(),
   fix_options: fixOptionsPayloadSchema.nullable().optional(),
@@ -807,6 +832,7 @@ export type FixOptionsPayload = z.infer<typeof fixOptionsPayloadSchema>;
 export type MonitorStatus = z.infer<typeof monitorStatusSchema>;
 export type OrchestratorCase = z.infer<typeof orchestratorCaseSchema>;
 export type ReadinessAssessment = z.infer<typeof readinessAssessmentSchema>;
+export type DependencyPlan = z.infer<typeof dependencyPlanSchema>;
 export type CreatePlanResult = z.infer<typeof createPlanResultSchema>;
 export type ApprovePlanResult = z.infer<typeof approvePlanResultSchema>;
 export type OperationPayload = z.infer<typeof operationPayloadSchema>;

@@ -265,6 +265,9 @@ class OrchestratorService:
         package_name: str | None = None
         detected_port: int | None = None
         start_script: str | None = None
+        required_dependencies: list[str] = []
+        dependency_summary: str | None = None
+        existing_databases: list[str] = []
 
         # Labels only — never resolve secret values into assessment text.
         llm_cfg = self._llm.resolve_config(workspace_id)
@@ -299,8 +302,44 @@ class OrchestratorService:
                     open_needs.append(f.code)
             ready = result.ready
             notes_parts.append(result.notes or f"app_path={path}")
+
+            # DevOps pass: scan for DB/Redis/disk — a project is rarely just one PaaS app.
+            dep_ctx = self._enrich_case_with_dependencies(
+                case,
+                app_path=path,
+                project_name=None,
+            )
+            required_dependencies = list(dep_ctx.get("required_kinds") or [])
+            dependency_summary = dep_ctx.get("summary")
+            for finding in dep_ctx.get("findings") or []:
+                if not isinstance(finding, dict):
+                    continue
+                findings.append(
+                    FindingPayload(
+                        code=str(finding.get("code") or "dependency"),
+                        message=str(finding.get("message") or ""),
+                        evidence_paths=list(finding.get("evidence_paths") or []),
+                        severity=str(finding.get("severity") or "error"),
+                    )
+                )
+            for need in dep_ctx.get("open_needs") or []:
+                if need not in open_needs:
+                    open_needs.append(str(need))
+            if required_dependencies:
+                notes_parts.append(
+                    "پیش‌نیازها: " + "، ".join(required_dependencies)
+                )
+            if dependency_summary:
+                notes_parts.append(str(dependency_summary))
         else:
             notes_parts.append("no app_path — LLM/orchestration readiness only")
+
+        # Account-level DBaaS inventory (read-only) — never claim a project is only PaaS.
+        existing_databases = self._list_existing_database_labels(workspace_id)
+        if existing_databases:
+            notes_parts.append(
+                "دیتابیس‌های موجود در حساب: " + "، ".join(existing_databases[:12])
+            )
 
         assessment = ReadinessAssessment(
             ready=ready and (llm_cfg is not None or "llm_stub_mode" in open_needs),
@@ -311,16 +350,23 @@ class OrchestratorService:
             findings=findings,
             detected_port=detected_port,
             start_script=start_script,
+            required_dependencies=required_dependencies,
+            dependency_summary=dependency_summary,
+            existing_databases=existing_databases,
         )
         # Stub orchestration remains usable without Aval; Node findings still surface.
         if path is None:
+            note = (
+                f"پرونده={case.id}؛ "
+                f"{'مدل زبانی آماده است' if llm_cfg else 'مدل زبانی تنظیم نشده — حالت ساده'}"
+            )
+            if existing_databases:
+                note += "؛ دیتابیس‌های حساب: " + "، ".join(existing_databases[:8])
             assessment = assessment.model_copy(
                 update={
                     "ready": True,
-                    "notes": (
-                        f"پرونده={case.id}؛ "
-                        f"{'مدل زبانی آماده است' if llm_cfg else 'مدل زبانی تنظیم نشده — حالت ساده'}"
-                    ),
+                    "notes": note,
+                    "existing_databases": existing_databases,
                 }
             )
 
@@ -331,6 +377,74 @@ class OrchestratorService:
             assessment.model_dump(mode="json"),
         )
         return assessment
+
+    def _list_existing_database_labels(self, workspace_id: uuid.UUID) -> list[str]:
+        """Public labels of account DBaaS rows — hostname/type only, no secrets."""
+        client = self.resolve_liara_client(workspace_id)
+        if client is None:
+            return []
+        try:
+            rows = client.list_databases()
+        except Exception:  # noqa: BLE001 — readiness must not fail closed on DBaaS list
+            return []
+        labels: list[str] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            hostname = (
+                row.get("hostname")
+                or row.get("name")
+                or row.get("displayName")
+                or row.get("_id")
+                or row.get("id")
+            )
+            db_type = row.get("type") or row.get("databaseType") or "db"
+            status = row.get("status") or row.get("state")
+            if not hostname:
+                continue
+            label = f"{hostname} ({db_type})"
+            if status:
+                label = f"{label} [{status}]"
+            labels.append(str(label))
+        return labels
+
+    def _enrich_case_with_dependencies(
+        self,
+        case: Case,
+        *,
+        app_path: str,
+        project_name: str | None,
+    ) -> dict[str, Any]:
+        """Discover file-backed deps, persist GenUI plan on case, return summary dict."""
+        discovery = discover_dependencies(app_path)
+        registry = CapabilityRegistry(self._session)
+        constraints = case.constraints if isinstance(case.constraints, dict) else {}
+        pending = list(constraints.get("pending_resources") or [])
+        view = build_dependency_plan_view(
+            discovery,
+            registry=registry,
+            pending_resources=pending,
+            project_name=project_name or "app",
+        )
+        constraints = dict(constraints)
+        constraints["dependency_discovery"] = discovery.to_dict()
+        constraints["dependency_plan"] = view.to_dict()
+        if discovery.required_kinds and not view.can_claim_complete_success:
+            open_needs = list(constraints.get("open_needs") or [])
+            for need in view.open_needs:
+                if need not in open_needs:
+                    open_needs.append(need)
+            constraints["open_needs"] = open_needs
+        case.constraints = constraints
+        self._session.flush()
+        return {
+            "required_kinds": list(discovery.required_kinds),
+            "findings": [f.to_dict() for f in discovery.findings],
+            "open_needs": list(view.open_needs),
+            "summary": view.summary,
+            "can_claim_complete_success": view.can_claim_complete_success,
+            "dependency_plan": view.to_dict(),
+        }
 
     # --- create_plan -----------------------------------------------------------
 
@@ -422,8 +536,15 @@ class OrchestratorService:
 
         if deploy_cfg.get("archive_path") and deploy_cfg.get("project_name"):
             platform = str(deploy_cfg.get("platform") or "node")
+            project_name = str(deploy_cfg["project_name"])
+            summary = self._deploy_summary_with_prereqs(
+                case,
+                goal_prefix=f"اولین انتشار برای: {case.goal[:200]}",
+                app_path=deploy_cfg.get("app_path") or constraints.get("app_path"),
+                project_name=project_name,
+            )
             return build_node_next_plan(
-                project_name=str(deploy_cfg["project_name"]),
+                project_name=project_name,
                 plan_id=str(deploy_cfg.get("plan_id") or deploy_cfg.get("planID") or "free"),
                 platform=platform,
                 port=int(deploy_cfg.get("port") or 3000),
@@ -444,7 +565,7 @@ class OrchestratorService:
                     )
                     else None
                 ),
-                summary=f"اولین انتشار برای: {case.goal[:200]}",
+                summary=summary,
             )
 
         # Infer Node/Next from app_path readiness when present.
@@ -460,13 +581,19 @@ class OrchestratorService:
                 Path(app_path) / "source.tar.gz"
             )
             platform = "next" if readiness.platform == "next" else "node"
+            summary = self._deploy_summary_with_prereqs(
+                case,
+                goal_prefix=f"طرح استقرار برای: {case.goal[:200]}",
+                app_path=app_path,
+                project_name=name,
+            )
             return build_node_next_plan(
                 project_name=name,
                 plan_id=str(deploy_cfg.get("plan_id") or "free"),
                 platform=platform,
                 port=int(deploy_cfg.get("port") or readiness.detected_port or 3000),
                 archive_path=str(archive),
-                summary=f"طرح استقرار برای: {case.goal[:200]}",
+                summary=summary,
             )
 
         stub = {
@@ -704,6 +831,42 @@ class OrchestratorService:
         body = build_deps_plan_body(view, only_enabled=False)
         return body
 
+    def _deploy_summary_with_prereqs(
+        self,
+        case: Case,
+        *,
+        goal_prefix: str,
+        app_path: Any,
+        project_name: str | None,
+    ) -> str:
+        """Append dependency prerequisites so deploy never looks like a single-app story."""
+        parts = [goal_prefix.rstrip(" .")]
+        path = app_path if isinstance(app_path, str) and app_path.strip() else None
+        if path:
+            dep_ctx = self._enrich_case_with_dependencies(
+                case, app_path=path, project_name=project_name
+            )
+            kinds = list(dep_ctx.get("required_kinds") or [])
+            if kinds:
+                parts.append(
+                    "پیش‌نیازهای زیرساخت: "
+                    + "، ".join(kinds)
+                    + " — قبل یا همزمان با اپ باید آماده شوند (اتصال و env جداگانه)."
+                )
+                if not dep_ctx.get("can_claim_complete_success"):
+                    parts.append(
+                        "ساخت خودکار دیتابیس/دیسک هنوز فعال نیست؛ "
+                        "در صورت نیاز از کنسول لیارا بسازید و URL را در Secrets ذخیره کنید."
+                    )
+            else:
+                parts.append("در اسکن پروژه پیش‌نیاز DB/Redis/Disk دیده نشد.")
+        existing = self._list_existing_database_labels(case.workspace_id)
+        if existing:
+            parts.append(
+                "دیتابیس‌های موجود در حساب: " + "، ".join(existing[:8])
+            )
+        return " ".join(parts)
+
     def discover_dependencies(
         self,
         *,
@@ -714,39 +877,23 @@ class OrchestratorService:
     ) -> DependencyPlanPayload:
         """File-backed discovery + GenUI dependency_plan (create gated by registry)."""
         case = self.ensure_case(workspace_id=workspace_id, case_id=case_id)
-        discovery = discover_dependencies(app_path)
-        registry = CapabilityRegistry(self._session)
-        constraints = case.constraints if isinstance(case.constraints, dict) else {}
-        pending = list(constraints.get("pending_resources") or [])
-        view = build_dependency_plan_view(
-            discovery,
-            registry=registry,
-            pending_resources=pending,
-            project_name=project_name or "app",
+        dep_ctx = self._enrich_case_with_dependencies(
+            case, app_path=app_path, project_name=project_name
         )
-        constraints = dict(constraints)
-        constraints["dependency_discovery"] = discovery.to_dict()
-        constraints["dependency_plan"] = view.to_dict()
-        # Required deps block "complete success" on the case.
-        if discovery.required_kinds and not view.can_claim_complete_success:
-            open_needs = list(constraints.get("open_needs") or [])
-            for need in view.open_needs:
-                if need not in open_needs:
-                    open_needs.append(need)
-            constraints["open_needs"] = open_needs
-        case.constraints = constraints
-        self._session.flush()
+        view_dict = dep_ctx.get("dependency_plan") or {}
         self._audit(
             workspace_id,
             case.id,
             "discover_dependencies",
             {
-                "required_kinds": list(discovery.required_kinds),
-                "can_claim_complete_success": view.can_claim_complete_success,
-                "open_needs": view.open_needs,
+                "required_kinds": list(dep_ctx.get("required_kinds") or []),
+                "can_claim_complete_success": bool(
+                    dep_ctx.get("can_claim_complete_success")
+                ),
+                "open_needs": list(dep_ctx.get("open_needs") or []),
             },
         )
-        return DependencyPlanPayload.model_validate(view.to_dict())
+        return DependencyPlanPayload.model_validate(view_dict)
 
     # --- approve_plan ----------------------------------------------------------
 

@@ -115,6 +115,29 @@ export const CHALLENGE_LOOP_CATALOG: ChallengeLoopCatalogEntry[] = [
   },
 ];
 
+/** Words that look like service names but are intent nouns (e.g. "service health"). */
+const PROJECT_NAME_STOPWORDS = new Set([
+  "health",
+  "status",
+  "logs",
+  "log",
+  "error",
+  "errors",
+  "monitor",
+  "domain",
+  "ssl",
+  "deploy",
+  "deployment",
+  "release",
+  "plan",
+  "سلامت",
+  "وضعیت",
+  "لاگ",
+  "خطا",
+  "دامنه",
+  "استقرار",
+]);
+
 /**
  * Pull a Liara project/service name from common shell CTA / chat phrasings.
  */
@@ -130,7 +153,9 @@ export function extractProjectNameFromGoal(goal: string): string | null {
   for (const pattern of patterns) {
     const match = text.match(pattern);
     const name = match?.[1]?.replace(/[؟?!.،,]+$/u, "").trim();
-    if (name) return name;
+    if (!name) continue;
+    if (PROJECT_NAME_STOPWORDS.has(name.toLowerCase())) continue;
+    return name;
   }
   return null;
 }

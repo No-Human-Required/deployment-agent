@@ -75,6 +75,56 @@ def test_discovery_file_backed(tmp_path: Path) -> None:
         assert any(Path(p).exists() or p.endswith("package.json") or ".env" in p or "liara.json" in p for p in finding.evidence_paths)
 
 
+def test_assess_readiness_surfaces_dependency_prereqs(
+    db_session: Session,
+    settings: Settings,
+    workspace: Workspace,
+    case: Case,
+    tmp_path: Path,
+) -> None:
+    root = _app_with_deps(tmp_path)
+    orch = OrchestratorService(db_session, settings, write_guard=WriteGuard())
+    assessment = orch.assess_readiness(
+        workspace_id=workspace.id,
+        case_id=case.id,
+        app_path=str(root),
+    )
+    assert "postgres" in assessment.required_dependencies
+    assert assessment.dependency_summary
+    assert any("postgres" in f.code or "postgres" in f.message for f in assessment.findings)
+    constraints = case.constraints or {}
+    assert constraints.get("dependency_plan")
+    assert "postgres" in (constraints.get("dependency_discovery") or {}).get(
+        "required_kinds", []
+    )
+
+
+def test_deploy_plan_summary_mentions_prerequisites(
+    db_session: Session,
+    settings: Settings,
+    workspace: Workspace,
+    case: Case,
+    tmp_path: Path,
+) -> None:
+    root = _app_with_deps(tmp_path)
+    orch = OrchestratorService(db_session, settings, write_guard=WriteGuard())
+    plan, body = orch.create_plan(
+        workspace_id=workspace.id,
+        case_id=case.id,
+        deploy={
+            "project_name": "shop-api",
+            "plan_id": "free",
+            "app_path": str(root),
+            "archive_path": str(root / "source.tar.gz"),
+            "platform": "next",
+        },
+    )
+    assert plan.id
+    summary = body.summary or ""
+    assert "postgres" in summary or "پیش‌نیاز" in summary
+    assert (case.constraints or {}).get("dependency_plan")
+
+
 def test_discovery_no_signals(tmp_path: Path) -> None:
     (tmp_path / "package.json").write_text(
         json.dumps({"name": "plain", "scripts": {"start": "node index.js"}, "dependencies": {}}),

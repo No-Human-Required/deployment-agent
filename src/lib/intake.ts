@@ -141,6 +141,8 @@ export function buildPlanPayloads(selection: IntakeSelection): {
       ...(platform ? { platform } : {}),
       ...(appPath ? { app_path: appPath } : {}),
     };
+    // Dependency discovery runs server-side inside deploy drafting (do not pass
+    // `deps` here — that would replace the deploy plan with a deps-only plan).
     return { deploy };
   }
 

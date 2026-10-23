@@ -51,6 +51,9 @@ const ACTION_LABELS: Record<string, { en: string; fa: string }> = {
 /**
  * Heuristic intent from the user goal (FA/EN keywords).
  * Used for stub steps before a plan body exists.
+ *
+ * Status/health checks that merely mention «استقرار» must not become deploy —
+ * e.g. composer skill “بررسی استقرار” / “Check the latest deployment…”.
  */
 export function inferGoalIntent(goal: string): GoalIntent {
   const g = goal.toLowerCase();
@@ -58,6 +61,14 @@ export function inferGoalIntent(goal: string): GoalIntent {
     /دامنه|domain|ssl|dns|irnic|cert|\.com\b|\.ir\b|connect\s+\S+\.(com|ir|net|org)/.test(g)
   ) {
     return "domain";
+  }
+  // Read-only status / latest release / health — before the deploy keyword match.
+  if (
+    /وضعیت\s+(آخرین\s+)?استقرار|آخرین\s+استقرار|سلامت\s+سرویس|بررسی\s+وضعیت|وضعیت\s+سلامت|check\s+(the\s+)?(latest\s+)?deployment|deployment\s+(and\s+)?(service\s+)?health|service\s+health|latest\s+deployment/.test(
+      g,
+    )
+  ) {
+    return "troubleshoot";
   }
   if (
     /اشکال|خطا|دیباگ|رفع|troubleshoot|debug|fix|incident|investigate|500|error|لاگ|log|bug/.test(

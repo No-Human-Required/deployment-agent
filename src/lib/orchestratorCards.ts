@@ -44,6 +44,50 @@ export function mapOrchestratorToCards(
     );
   }
 
+  // Prerequisites (DB/Redis/disk) — show in chat when the app needs more than one service.
+  const depPlan = run.dependency_plan;
+  const readinessDeps = run.readiness?.required_dependencies ?? [];
+  if (depPlan && (depPlan.required_kinds.length > 0 || depPlan.findings.length > 0)) {
+    cards.push(
+      viewPayloadSchema.parse({
+        type: "dependency_plan",
+        data: {
+          version: depPlan.version,
+          summary: depPlan.summary ?? null,
+          required_kinds: depPlan.required_kinds,
+          findings: depPlan.findings,
+          create_database_enabled: depPlan.create_database_enabled,
+          create_disk_enabled: depPlan.create_disk_enabled,
+          open_needs: depPlan.open_needs,
+          can_claim_complete_success: depPlan.can_claim_complete_success,
+        },
+      }),
+    );
+  } else if (readinessDeps.length > 0) {
+    cards.push(
+      viewPayloadSchema.parse({
+        type: "dependency_plan",
+        data: {
+          version: "readiness-deps",
+          summary: run.readiness?.dependency_summary ?? null,
+          required_kinds: readinessDeps,
+          findings: (run.readiness?.findings ?? [])
+            .filter((f) => /^need_/.test(f.code) || /dependenc/i.test(f.code))
+            .map((f) => ({
+              kind: f.code.replace(/^need_/, "").replace(/_from_.*/, "") || "dependency",
+              code: f.code,
+              message: f.message,
+              severity: f.severity,
+            })),
+          create_database_enabled: false,
+          create_disk_enabled: false,
+          open_needs: run.readiness?.open_needs ?? [],
+          can_claim_complete_success: false,
+        },
+      }),
+    );
+  }
+
   // Troubleshoot / maintain GenUI — useful outcomes, not readiness dumps.
   if (run.evidence) {
     cards.push(

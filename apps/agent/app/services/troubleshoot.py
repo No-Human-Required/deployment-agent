@@ -258,6 +258,57 @@ def collect_evidence_from_client(
             )
         )
 
+    # Account DBaaS inventory — apps often depend on databases outside the PaaS project.
+    try:
+        databases = client.list_databases()
+        if not databases:
+            facts.append(
+                EvidenceFact(
+                    id=_fid(),
+                    source="other",
+                    summary="no DBaaS databases listed on this account",
+                    observed_at=_utcnow_iso(),
+                    raw_ref="account:databases",
+                )
+            )
+        else:
+            labels: list[str] = []
+            for row in databases[:12]:
+                if not isinstance(row, dict):
+                    continue
+                hostname = (
+                    row.get("hostname")
+                    or row.get("name")
+                    or row.get("displayName")
+                    or row.get("_id")
+                    or row.get("id")
+                )
+                db_type = row.get("type") or row.get("databaseType") or "db"
+                if hostname:
+                    labels.append(f"{hostname}:{db_type}")
+            facts.append(
+                EvidenceFact(
+                    id=_fid(),
+                    source="other",
+                    summary=(
+                        f"{len(databases)} account database(s): "
+                        + (", ".join(labels) if labels else "present")
+                    ),
+                    observed_at=_utcnow_iso(),
+                    raw_ref="account:databases",
+                )
+            )
+    except LiaraClientError as exc:
+        gaps.append(
+            EvidenceGap(
+                source="other",
+                reason=exc.code,
+                impact=(
+                    "Cannot list DBaaS; do not assume the project is only a single PaaS app."
+                ),
+            )
+        )
+
     # CPU / memory — missing ≠ empty success
     for source, getter in (
         ("metrics_cpu", client.get_cpu_metrics),
@@ -351,11 +402,58 @@ def diagnose_from_evidence(pack: EvidencePack) -> Diagnosis:
         )
         rank += 1
 
+    db_inventory_facts = [
+        f
+        for f in pack.facts
+        if f.source == "other"
+        and re.search(r"(?i)account database", f.summary)
+        and not re.search(r"(?i)^no DBaaS", f.summary)
+    ]
+    db_conn_support = [
+        f.id
+        for f in log_facts
+        if re.search(
+            r"(?i)(econnrefused|connection\s+refused|database|postgres|mongodb|"
+            r"redis|mysql|sequelize|prisma|mongo).*?(fail|error|timeout|refus)",
+            f.summary,
+        )
+        or re.search(
+            r"(?i)(ENOTFOUND|getaddrinfo|password authentication failed|"
+            r"no such host|could not connect)",
+            f.summary,
+        )
+    ]
+    # Only hypothesize missing DB wiring from connection/runtime signals — not from
+    # a bare inventory fact (or "0 error-like" meta summaries).
+    if db_conn_support:
+        hypotheses.append(
+            Hypothesis(
+                id=f"h{rank}",
+                rank=rank,
+                statement=(
+                    "App may be missing a wired database dependency "
+                    "(connection URL / env / network) — projects often need DBaaS "
+                    "alongside the PaaS app."
+                    + (
+                        f" Account DBaaS seen: {db_inventory_facts[0].summary}."
+                        if db_inventory_facts
+                        else ""
+                    )
+                ),
+                supporting_fact_ids=db_conn_support
+                + [f.id for f in db_inventory_facts[:1]],
+                contradicting_fact_ids=[],
+            )
+        )
+        rank += 1
+
     error_support = [
         f.id
         for f in log_facts
         if re.search(r"(?i)\b(error|exception|fatal)\b", f.summary)
+        and not re.search(r"(?i)error-like", f.summary)
         and f.id not in oom_support
+        and f.id not in db_conn_support
     ]
     if error_support:
         hypotheses.append(

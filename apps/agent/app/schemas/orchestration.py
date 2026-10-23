@@ -75,6 +75,10 @@ class ReadinessAssessment(BaseModel):
     findings: list[FindingPayload] = Field(default_factory=list)
     detected_port: int | None = None
     start_script: str | None = None
+    # DevOps-style prerequisites (DB/Redis/disk) — optional for older clients.
+    required_dependencies: list[str] = Field(default_factory=list)
+    dependency_summary: str | None = None
+    existing_databases: list[str] = Field(default_factory=list)
 
 
 # --- Phase 3: evidence + diagnosis (no invented confidence %) -----------------

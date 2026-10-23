@@ -235,4 +235,17 @@ describe("GenUI view payload schemas", () => {
     expect(fa).toMatch(/تأیید/);
     expect(fa).not.toMatch(/آمادگی|UUID|create_case|assess_readiness|پرونده=/);
   });
+
+  it("explains verify_failed without claiming success", async () => {
+    const { verificationAssistantText, verificationNeedsTroubleshoot } = await import(
+      "./quietChat"
+    );
+    const fa = verificationAssistantText("fa", "verify_failed", {
+      verification: { release_ok: true, http_ok: false, http_status: 502 },
+    });
+    expect(fa).toMatch(/تأیید نشد|ناموفق/);
+    expect(fa).toMatch(/502|HTTP/);
+    expect(verificationNeedsTroubleshoot("verify_failed")).toBe(true);
+    expect(verificationNeedsTroubleshoot("verified")).toBe(false);
+  });
 });

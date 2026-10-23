@@ -80,7 +80,9 @@ import {
 import type { OrchestratorRun, SettingsView } from "./lib/schemas";
 import {
   planReadyAssistantText,
+  projectNameFromOperationCheckpoint,
   verificationAssistantText,
+  verificationNeedsTroubleshoot,
 } from "./lib/quietChat";
 import {
   diagnosisFollowUpReplies,
@@ -1004,10 +1006,36 @@ function App() {
       setOrchestratorRun(run);
 
       const readiness = await assessReadiness(workspaceId, created.id, appPath);
+      const readinessDepPlan =
+        readiness.required_dependencies.length > 0
+          ? {
+              version: "readiness-deps",
+              summary:
+                readiness.dependency_summary ??
+                (language === "fa"
+                  ? `پیش‌نیازهای پروژه: ${readiness.required_dependencies.join("، ")}`
+                  : `Project prerequisites: ${readiness.required_dependencies.join(", ")}`),
+              required_kinds: readiness.required_dependencies,
+              findings: readiness.findings
+                .filter((f) => /^need_/.test(f.code) || /dependenc/i.test(f.code))
+                .map((f) => ({
+                  kind:
+                    f.code.replace(/^need_/, "").replace(/_from_.*/, "") || "dependency",
+                  code: f.code,
+                  message: f.message,
+                  severity: f.severity,
+                })),
+              create_database_enabled: false,
+              create_disk_enabled: false,
+              open_needs: readiness.open_needs.filter((n) => /dependenc/i.test(n)),
+              can_claim_complete_success: false,
+            }
+          : null;
       run = {
         ...run,
         stage: "planning",
         readiness,
+        dependency_plan: readinessDepPlan,
         summary: language === "fa" ? "در حال آماده‌سازی طرح…" : "Drafting a plan…",
         timeline: buildRequestTimeline({
           language,
@@ -1018,6 +1046,42 @@ function App() {
         events: [...run.events, stamp("assess_readiness")],
       };
       setOrchestratorRun(run);
+
+      // Tell the user about multi-service prerequisites before drafting a write plan.
+      if (
+        readinessDepPlan &&
+        readiness.required_dependencies.length > 0 &&
+        language === "fa"
+      ) {
+        const dbNote =
+          readiness.existing_databases.length > 0
+            ? ` در حسابتان این دیتابیس‌ها دیده می‌شود: ${readiness.existing_databases.slice(0, 6).join("، ")}.`
+            : " اگر دیتابیس از قبل دارید، باید به اپ وصل و env تنظیم شود.";
+        setMessages((current) => [
+          ...current,
+          {
+            id: id(),
+            role: "assistant",
+            text: `قبل از ادامه: این پروژه فقط یک سرویس اپ نیست — پیش‌نیازها: ${readiness.required_dependencies.join("، ")}.${dbNote}`,
+          },
+        ]);
+      } else if (
+        readinessDepPlan &&
+        readiness.required_dependencies.length > 0
+      ) {
+        const dbNote =
+          readiness.existing_databases.length > 0
+            ? ` Account databases seen: ${readiness.existing_databases.slice(0, 6).join(", ")}.`
+            : " If you already have a database, it must be wired with env vars.";
+        setMessages((current) => [
+          ...current,
+          {
+            id: id(),
+            role: "assistant",
+            text: `Before we continue: this project is more than one PaaS app — prerequisites: ${readiness.required_dependencies.join(", ")}.${dbNote}`,
+          },
+        ]);
+      }
 
       // Context service skips intake when present; otherwise GenUI asks for it.
       const route = resolveChallengeLoopRoute(goal, {
@@ -1768,6 +1832,7 @@ function App() {
           : current,
       );
       const approval = await approvePlan(orchestratorRun.workspace_id, orchestratorRun.plan_id);
+      let runEvents = [...orchestratorRun.events, stamp("approve_plan", "user")];
       setOrchestratorRun((current) =>
         current
           ? {
@@ -1782,7 +1847,7 @@ function App() {
                 planBody: current.plan_body,
                 readiness: current.readiness,
               }),
-              events: [...current.events, stamp("approve_plan", "user")],
+              events: runEvents,
             }
           : current,
       );
@@ -1797,6 +1862,7 @@ function App() {
         clientRequestId,
       });
 
+      runEvents = [...runEvents, stamp("execute_plan")];
       setOrchestratorRun((current) =>
         current
           ? {
@@ -1812,32 +1878,35 @@ function App() {
                 readiness: current.readiness,
                 operationState: operation.state,
               }),
-              events: [...current.events, stamp("execute_plan")],
+              events: runEvents,
             }
           : current,
       );
 
       const verified = await verifyResult(orchestratorRun.workspace_id, operation.id);
-      const doneSummary = verificationAssistantText(language, verified.state);
-      setOrchestratorRun((current) =>
-        current
-          ? {
-              ...current,
-              stage: "verified",
-              operation: verified,
-              summary: doneSummary,
-              timeline: buildRequestTimeline({
-                language,
-                goal: current.goal,
-                stage: "verified",
-                planBody: current.plan_body,
-                readiness: current.readiness,
-                operationState: verified.state,
-              }),
-              events: [...current.events, stamp("verify_result")],
-            }
-          : current,
+      const doneSummary = verificationAssistantText(
+        language,
+        verified.state,
+        verified.checkpoint ?? null,
       );
+      runEvents = [...runEvents, stamp("verify_result")];
+      const afterVerify: OrchestratorRun = {
+        ...orchestratorRun,
+        stage: "verified",
+        operation: verified,
+        summary: doneSummary,
+        timeline: buildRequestTimeline({
+          language,
+          goal: orchestratorRun.goal,
+          stage: "verified",
+          planBody: orchestratorRun.plan_body,
+          readiness: orchestratorRun.readiness,
+          operationState: verified.state,
+        }),
+        events: runEvents,
+        approval,
+      };
+      setOrchestratorRun(afterVerify);
       clearLatestQuickReplies();
       setMessages((current) => [
         ...current,
@@ -1845,9 +1914,33 @@ function App() {
           id: id(),
           role: "assistant",
           text: doneSummary,
-          ...withQuickReplies(verifiedFollowUpReplies(language)),
+          ...(verificationNeedsTroubleshoot(verified.state)
+            ? {}
+            : withQuickReplies(verifiedFollowUpReplies(language))),
         },
       ]);
+
+      // Non-technical users expect the agent to investigate failed verification.
+      if (verificationNeedsTroubleshoot(verified.state)) {
+        const projectName =
+          projectNameFromOperationCheckpoint(verified.checkpoint ?? null) ||
+          primaryContextService ||
+          "";
+        if (projectName.trim()) {
+          await runTroubleshootLoop({
+            workspaceId: orchestratorRun.workspace_id,
+            caseId: orchestratorRun.case_id,
+            goal:
+              language === "fa"
+                ? `راستی‌آزمایی استقرار ناموفق شد (${verified.state}). علت را پیدا کن و در صورت امکان اصلاح پیشنهاد بده.`
+                : `Deploy verification failed (${verified.state}). Find the cause and propose a fix if possible.`,
+            projectName: projectName.trim(),
+            readiness: orchestratorRun.readiness,
+            priorEvents: afterVerify.events,
+            priorRun: afterVerify,
+          });
+        }
+      }
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : "The approval request failed.";
       setError(message);

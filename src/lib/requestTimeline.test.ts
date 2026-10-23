@@ -28,6 +28,16 @@ describe("inferGoalIntent", () => {
     expect(inferGoalIntent("Connect custom domain and SSL")).toBe("domain");
     expect(inferGoalIntent("اتصال دامنه")).toBe("domain");
   });
+
+  it("routes status/health checks to troubleshoot even when they mention استقرار", () => {
+    expect(inferGoalIntent("وضعیت آخرین استقرار و سلامت سرویس را بررسی کن")).toBe(
+      "troubleshoot",
+    );
+    expect(inferGoalIntent("Check the latest deployment and service health")).toBe(
+      "troubleshoot",
+    );
+    expect(inferGoalIntent("وضعیت سلامت سرویس را نشان بده")).toBe("troubleshoot");
+  });
 });
 
 describe("labelPlanStepAction", () => {
