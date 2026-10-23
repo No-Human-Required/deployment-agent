@@ -1,0 +1,32 @@
+# 09-docs-run — execution note
+
+- 09-docs-run.md
+  - status: implemented
+  - execution conversation / checkout: hitl-slice-builder / liara-agent (coordinator auto-run claim, FINAL slice)
+  - changed files / artifacts:
+    - `README.md` — Vite+agent quickstart, ports table (5173/8000/5433/6379), Settings Liara+Aval, chat HITL propose≠execute, architecture (Next retired), links to challenge/PRD/runbook, known limitations
+    - `docs/liara-companion.md` — short developer/demo runbook: env → compose → migrate/seed → agent → Vite; Settings; HITL; retired paths; smoke; limitations
+    - `.env.example` — comments only: proxy target, SECRETS_MASTER_KEY, optional DATABASE_URL :5433, WEB_ORIGIN :5173, Aval base note; no real credentials
+  - verification run and results:
+    - `test -f apps/agent/pyproject.toml && test -f src/App.tsx && test -f vite.config.ts` — PATH_SMOKE_OK
+    - Docs files exist; grep for obvious secret patterns (`sk-`, Bearer JWT, long `liara_` tokens) on changed docs — no matches
+    - Content spot-check: ports, Aval default `https://api.avalai.ir/v1`, Approve HITL, `apps/web` retired, challenge + PRD links present
+  - verification not run and limitations:
+    - Did not run `docker compose up`, migrate, uvicorn, or `npm run dev` (docs-only slice; compose file absent from tree)
+    - Did not run `npm run build` / `apps/agent` pytest (out of this prompt’s verification)
+    - Did not open browser Settings/chat live path
+  - finalization basis, if finalized: (coordinator owns)
+  - implementation decisions / findings:
+    - Split reader path: root README for quickstart + `docs/liara-companion.md` for ordered runbook (per prompt “README and/or runbook”)
+    - Confirmed Postgres host **5433** from `apps/agent` `Settings.from_env` default `DATABASE_URL` and historical compose (`git show ea70573:docker-compose.yml`); Redis **6379**
+    - **Finding:** root `docker-compose.yml` is **missing** from the working tree and HEAD; documented expected services + known limitation instead of creating the file (outside ownership: README/docs/.env.example comments only)
+    - Aval defaults documented from shell `SettingsPanel` (`DEFAULT_AVAL_BASE` / model placeholder) and prompt facts; secrets never echoed called out
+    - HITL documented as plan → explicit Approve card → execute (propose≠execute); chat-text approve refused
+    - Linked `challenge.md` and `liara-prd-v0.3.md`; noted `apps/web` retired
+    - Local compose placeholders `liara`/`liara` match app default URL only — not production credential examples
+  - deviations from prompt: none material; did not restore `docker-compose.yml` (ownership boundary) — flagged as known limitation so `docker compose up -d` may fail until file restored
+  - specialist findings / selection changes:
+    - technical-documentation: smallest durable set = README + focused runbook; claims grounded in config/UI/history; missing compose disclosed rather than inventing a present file
+  - learning candidates, if any: none (compose absence is repo state, not a definition-skill gap)
+  - implications for remaining prompts: none — final agreed slice; coordinator may restore compose out-of-band if desired
+  - blocking reason / skipped rationale, if applicable: none for docs deliverable; infra bring-up blocked only if operator lacks Postgres on 5433 without recreating compose

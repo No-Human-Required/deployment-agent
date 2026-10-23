@@ -1,0 +1,38 @@
+# 05-genui-cards-parity — execution note
+
+- 05-genui-cards-parity.md
+  - status: implemented
+  - execution conversation / checkout: hitl-slice-builder / liara-agent (`main-kamyar-before-kobra`)
+  - changed files / artifacts:
+    - `src/lib/schemas.ts` — extended `knownViewPayloadSchema` with companion GenUI types: `plan`, `readiness_findings`, `evidence_pack`, `diagnosis`, `dependency_plan`, `patch_diff`, `monitor_status`, `incident`, `operation_status`, `verification_result` (kept existing types + `unsupported` via `viewPayloadSchema`)
+    - `src/lib/orchestratorCards.ts` — `mapOrchestratorToCards`, `approvalResultFromRun`, `companionCardFixtures`
+    - `src/lib/schemas.genui.test.ts` — accept good / reject garbage / unknown→unsupported / orchestrator mapping
+    - `src/components/agent-ui/GenerativeCard.tsx` — renderers for all new card kinds; EN/FA copy; HITL approve/reject only on approval card buttons
+    - `src/components/PlanApprovalPanel.tsx` — replaced bespoke panel with GenerativeCard stack from mapper (HITL preserved)
+    - `src/App.tsx` — show card stack when readiness/plan/operation present (not only plan_body)
+    - `src/components/Inspector.tsx` — surfaces readiness / operation_status / verification_result cards
+  - verification run and results:
+    - `npm test` — success (4 files, 15 tests)
+    - `npm run build` — success (`tsc -b && vite build`)
+  - verification not run and limitations:
+    - No live browser/manual UI pass against running `apps/agent`
+    - Companion card kinds beyond orchestrator-mapped set (`evidence_pack`, `diagnosis`, `dependency_plan`, `patch_diff`, `monitor_status`, `incident`) covered by fixtures + schema/renderers; not yet wired to live troubleshoot/deps/patch/monitor API responses (deferred until those chat flows emit structured payloads)
+    - Visual excellence / motion polish deferred to slice 07
+  - finalization basis, if finalized: (coordinator)
+  - implementation decisions / findings:
+    - Mapped slice-04 orchestrator session into `readiness_findings` + `plan` + `approval` (+ `operation_status` / `verification_result` after execute) without rewriting `apps/agent`
+    - Kept PlanApprovalPanel as the chat integration point so App HITL wiring stayed stable; internals now GenUI cards
+    - Approval actions remain button-gated (`pending` + `onApproval`); chat-text approve still refused in App from slice 04
+    - Unknown/invalid-at-union types parse to `unsupported` fallback (safe UI); strict `knownViewPayloadSchema` rejects garbage for tests
+    - generative-ui skill path not present on disk; followed prompt + companion schema shapes from `apps/agent/app/schemas/orchestration.py`
+  - deviations from prompt:
+    - None material; did not add nav pages (06) or excellence pass (07); did not rewrite agent domain
+  - specialist findings / selection changes:
+    - ux-design: explicit Approve/Reject; FA/EN on new cards; unknown→safe fallback; propose≠execute preserved
+    - api-design: FE ViewPayload shapes mirror companion GenUI concepts; client maps existing orchestrator fields rather than inventing BFF `ui` hints
+    - generative-ui: skill file missing; implemented allowlist + UnknownFallback behavior from prompt context
+  - learning candidates, if any: none (missing generative-ui skill is environment gap, not a definition-rooted learning candidate requiring skill edit)
+  - implications for remaining prompts:
+    - 06 can reuse card types for nav surfaces (monitor/incident/ops) when wiring live list APIs
+    - 07 can polish card motion/typography without schema churn
+  - blocking reason / skipped rationale, if applicable: none

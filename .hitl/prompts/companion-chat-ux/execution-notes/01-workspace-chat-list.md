@@ -1,0 +1,35 @@
+# 01-workspace-chat-list — execution note
+
+- 01-workspace-chat-list.md
+  - status: implemented
+  - execution conversation / checkout: hitl-slice-builder / liara-agent (repo root)
+  - changed files / artifacts:
+    - `src/lib/workspace.ts` — persist local folder path + displayName (`liaraops-ai:local-workspace`); `normalizeWorkspaceKey` / `folderDisplayName`
+    - `src/lib/workspace.test.ts` — load/save + path normalization
+    - `src/lib/conversations.ts` — store v3 `{ byWorkspace }`; chats keyed by normalized folder path; legacy v1/v2 flat lists migrate to `__unscoped__` (not shown in UI)
+    - `src/lib/conversations.test.ts` — multi-folder isolation, migration, save validation
+    - `src/lib/api.ts` — `pickLocalPath()` → existing `POST /api/local/pick-path` (no new BFF)
+    - `src/App.tsx` — folder gate empty state + CTA; workspace chrome; scoped recent list; New Chat / composer / orchestrator start blocked without folder; Settings & other nav still reachable; switch folder flushes old list + loads new + resets thread
+    - `src/index.css` — workspace-switch clickable + gate CTA styles
+  - verification run and results:
+    - `npm test -- --run src/lib/conversations.test.ts src/lib/workspace.test.ts` — 2 files, 9 tests passed
+    - `npm test -- --run` (full vitest) — 6 files, 25 tests passed
+  - verification not run and limitations:
+    - No browser/manual UI walkthrough of native folder picker (requires `apps/agent` running + OS dialog)
+    - `npm run build` not run (store/UI contract covered by vitest; build optional per prompt)
+    - Did not exercise live Liara / orchestrator with a real folder (out of slice; `app_path` injection is slice 02)
+  - finalization basis, if finalized: (coordinator owns)
+  - implementation decisions / findings:
+    - Folder picker: reuse companion `POST /api/local/pick-path` (native OS dialog via agent) rather than `webkitdirectory` / File System Access API — returns absolute path needed later for `app_path`.
+    - Workspace identity: trimmed path with trailing `/` or `\` stripped; display name = last path segment.
+    - Conversation persistence: version bump 2→3 with `byWorkspace[path]`; max 8 chats per folder; separate key from workspace selection so Settings can load without a folder.
+    - UX: without folder → New Chat shows gate CTA; composer disabled; recent list shows need-folder copy; clicking workspace chrome / New Chat / demo CTA opens picker; Settings unchanged and reachable from sidebar.
+  - deviations from prompt: none material. Legacy unscoped chats are retained in storage under `__unscoped__` but not surfaced (no folder to attach them to); acceptable for schema migration.
+  - specialist findings / selection changes:
+    - agent-workspace-ux: folder-first gate; chats scoped to workspace; general Settings outside gate — applied.
+    - ux-design: empty/gate/disabled composer states + FA copy; recovery via re-pick on chrome — applied. No skill selection change.
+  - learning candidates, if any: none (definition matched implementation).
+  - implications for remaining prompts:
+    - Slice 02 can read `localWorkspace.path` / `workspaceKey` and inject as `app_path` into orchestrator calls; quiet-chat can assume folder already gated.
+    - Domains (05) may stay folder-optional for cloud-only list, or reuse chrome; chat list already scoped.
+  - blocking reason / skipped rationale, if applicable: none

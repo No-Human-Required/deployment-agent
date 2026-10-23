@@ -1,0 +1,37 @@
+# 06-nav-surfaces-live — execution note
+
+- 06-nav-surfaces-live.md
+  - status: implemented
+  - execution conversation / checkout: hitl-slice-builder / liara-agent (`main-kamyar-before-kobra`)
+  - changed files / artifacts:
+    - `src/lib/schemas.ts` — `liaraPlan(s)Result`, `maintainIncident(s)Result`, `maintainAudit(Event|Result)` schemas + types
+    - `src/lib/api.ts` — `getLiaraPlans`, `getIncidents`, `getAuditEvents`; `getServices` kept as live prove-read catalog (no better list BFF)
+    - `src/lib/schemas.nav.test.ts` — accept/reject checks for plans, incidents, audit
+    - `src/components/nav/NavigationView.tsx` — My Services / Deployments / Monitoring / Domains / Agent History with loading/error/empty; EN/FA
+    - `src/App.tsx` — wires catalog state, settings gate, refresh; removes demo placeholders; honest service count (no `|| 3`); no fake monitoring pulse
+    - `src/index.css` — nav stack / state-card helpers
+  - verification run and results:
+    - `npm test` — success (5 files, 20 tests)
+    - `npm run build` — success (`tsc -b && vite build`)
+  - verification not run and limitations:
+    - No live browser pass against running `apps/agent` + real Liara token
+    - No companion pytest (FE-only slice; BFF unchanged)
+    - Monitor *list* HTTP route does not exist (only `GET /monitors/{id}`); Monitoring surface uses `GET /api/maintain/incidents` + honest empty/CTA
+    - Domains: no read-only list BFF — explicit unsupported (no fake domains)
+    - Deployments: prove-read project status + `GET /api/liara/plans` (PaaS plan catalog), not release history — labeled honestly
+  - finalization basis, if finalized: (coordinator)
+  - implementation decisions / findings:
+    - Prefer existing read-only companion contracts over inventing ungated write/list BFF routes
+    - Services remain prove-read mapped catalog; refresh + token-missing → Settings prompt, never demo rows
+    - History: local conversation store (open-in-chat) + optional `GET /api/maintain/audit` when workspace_id available
+    - FA/RTL via existing shell language toggle + bilingual nav copy
+  - deviations from prompt:
+    - None material; did not add excellence polish (07) or retire Next (08); no ungated writes
+  - specialist findings / selection changes:
+    - api-design: client mirrors companion list/read shapes; errors surface as message strings via existing `request` helper; no secret fields
+    - ux-design: each surface has loading/error/empty; Domains/Monitoring refuse fake success; Settings CTA when token/workspace missing
+  - learning candidates, if any: none
+  - implications for remaining prompts:
+    - 07 can polish motion/empty visuals on these honest states without contract churn
+    - Future BFF `GET /api/maintain/monitors` or domains list would unlock richer Monitoring/Domains without changing HITL write gates
+  - blocking reason / skipped rationale, if applicable: none

@@ -1,0 +1,36 @@
+# 02-quiet-conversation — execution note
+
+- 02-quiet-conversation.md
+  - status: implemented
+  - execution conversation / checkout: hitl-slice-builder / liara-agent (repo root)
+  - changed files / artifacts:
+    - `src/lib/quietChat.ts` — `assessReadinessPayload` (optional `app_path`), `planReadyAssistantText`, `verificationAssistantText`
+    - `src/lib/orchestratorCards.ts` — `surface: "chat" | "inspector"`; chat omits readiness / operation / verification cards and strips plan `tool_id` / case / plan / hash ids; `mapOrchestratorToChatCards` helper
+    - `src/components/PlanApprovalPanel.tsx` — uses chat mapper; returns null when no quiet cards
+    - `src/lib/api.ts` — `assessReadiness` builds body via `assessReadinessPayload` (passes folder path when set)
+    - `src/App.tsx` — injects `localWorkspace.path` into `assessReadiness`; conversational assistant bubbles (no readiness notes / UUID spam); chat panel only when `plan_body` (HITL plan + approve retained); internals stay on `orchestratorRun` for Inspector
+    - `src/lib/schemas.genui.test.ts` — quiet chat card filter, payload shaping, conversational copy tests
+  - verification run and results:
+    - `npm test -- --run src/lib/schemas.genui.test.ts src/lib/schemas.orchestrator.test.ts src/lib/conversations.test.ts src/lib/workspace.test.ts` — 4 files, 20 passed
+    - `npm test -- --run` (full vitest) — 6 files, 28 passed
+  - verification not run and limitations:
+    - No manual browser chat walkthrough against live `apps/agent` (readiness with real folder / HITL approve click)
+    - `npm run build` not run
+    - Did not call live Liara writes
+    - `createPlan` still has no top-level `app_path`; did not pass `deploy.app_path` automatically (would force deploy drafts for every goal — deferred to GenUI intake / slice 04)
+  - finalization basis, if finalized: (coordinator owns)
+  - implementation decisions / findings:
+    - Quiet disclosure: chat shows plan + approval HITL only; readiness findings («نتیجه بررسی آمادگی»), op/verify UUID cards, and plan tool chips stay out of transcript; Inspector keeps full `mapOrchestratorToCards` (default surface).
+    - Orchestrator pipeline (create_case → assess → create_plan) still runs behind the scenes; chat text uses human summaries, not `readiness.notes` (which embed case UUID / «مدل … آماده»).
+    - `app_path`: pass selected folder into `assessReadiness` only among shell client helpers that already accept it without changing plan intent.
+    - HITL: Approve/Reject on approval card unchanged; free-text approve still refused.
+  - deviations from prompt: none material. Plan-path `app_path` injection limited to readiness (see limitations) to avoid expanding contracts or hijacking non-deploy goals.
+  - specialist findings / selection changes:
+    - agent-workspace-ux: wrong disclosure (internals in bubbles) treated as defect; progress stays secondary to dialogue — applied.
+    - ux-design: conversational reply + preserve propose≠execute HITL — applied. No skill selection change.
+  - learning candidates, if any: none (definition matched implementation).
+  - implications for remaining prompts:
+    - Slice 03 (timeline) can humanize Inspector timeline tool ids; chat already quiet.
+    - Slice 04 (GenUI intake) should own when `deploy`/`deps` get `app_path` / service/plan fields after intent is clear.
+    - Slice 06 can assume chat no longer dumps readiness/UUID/tool labels.
+  - blocking reason / skipped rationale, if applicable: none

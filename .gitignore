@@ -1,0 +1,28 @@
+# Secrets & local runtime config (Settings UI / Liara / Aval)
+.env
+.env.local
+.env.*.local
+
+# Encrypted Liara/Aval settings store (Fernet)
+backend/.data/
+*.enc
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node / frontend build
+node_modules/
+dist/
+.next/
+**/.next/
+out/
+*.tsbuildinfo
+
+# OS / editor
+.DS_Store

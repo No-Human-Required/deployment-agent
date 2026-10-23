@@ -1,0 +1,40 @@
+# 04-genui-intake — execution note
+
+- 04-genui-intake.md
+  - status: implemented
+  - execution conversation / checkout: hitl-slice-builder / liara-agent (repo root)
+  - changed files / artifacts:
+    - `src/lib/intake.ts` — `resolveIntakeKind` / `needsIntake`, requirements, `buildPlanPayloads` (deploy with `app_path`, ops resize/domain), GenUI prompt/title helpers, `toIntakeViewPayload`
+    - `src/lib/intake.test.ts` — intent gating, payload shapes, schema parse of intake card
+    - `src/lib/schemas.ts` — `intake` GenUI type; stage `awaiting_intake`; optional `orchestratorRun.intake`
+    - `src/lib/api.ts` — `createPlan` forwards `deploy` / `ops` / `deps`
+    - `src/lib/requestTimeline.ts` — awaiting_intake waiting step; slightly broader domain heuristic (`.com` / connect)
+    - `src/lib/requestTimeline.test.ts` — awaiting_intake coverage
+    - `src/lib/schemas.genui.test.ts` — intake card parse
+    - `src/components/agent-ui/GenerativeCard.tsx` — interactive intake card (service / plan / domain + Settings CTA on load error)
+    - `src/components/IntakePanel.tsx` — chat-side intake panel before plan/HITL
+    - `src/App.tsx` — after assess, pause for intake when needed; confirm → `createPlan` with payloads + workspace `app_path`; HITL unchanged
+    - `src/index.css` — `.intake-input` styles
+  - verification run and results:
+    - `npm test -- --run` — 8 files, 41 passed
+  - verification not run and limitations:
+    - No manual browser walkthrough against live Liara catalog / create_plan
+    - `npm run build` not run
+    - No live Liara writes (HITL path untouched in verification)
+  - finalization basis, if finalized: (coordinator owns)
+  - implementation decisions / findings:
+    - Client-side intake after `create_case` + `assess_readiness`, before `create_plan` — avoids BFF redesign; reuses `getServices` / `getLiaraPlans`.
+    - Intake kinds: deploy (service + plan + `deploy.app_path`), ops_resize (service + plan → `ops.kind=resize`), domain (service + domain → `ops.kind=domain`). Pure Q&A / troubleshoot skip cards.
+    - Deploy passes only `deploy` (not deps) so orchestrator does not prefer a deps plan over deploy when both would match.
+    - Catalog load failure: card shows error + Settings CTA; user can still type a new service name when list empty.
+    - HITL Approve/Reject on plan card remains the write authorization gate; chat text cannot submit intake or approve.
+  - deviations from prompt: none material. Domain heuristic extended slightly so “Connect example.com …” counts as domain intent.
+  - specialist findings / selection changes:
+    - agent-workspace-ux: GenUI after intent; propose≠execute — applied.
+    - ux-design: loading/error/empty service states + Settings recovery — applied.
+    - api-design: thin client contract delta (`createPlan` optional deploy/ops/deps) matching existing BFF body — applied; no skill selection change.
+  - learning candidates, if any: none (definition matched implementation).
+  - implications for remaining prompts:
+    - Slice 05 (Domains nav) can reuse intake patterns / ops domain payload; must not assume Domains page exists yet.
+    - Slice 06 can exercise deploy/domain chat journeys: intent → intake card → plan → HITL.
+  - blocking reason / skipped rationale, if applicable: none

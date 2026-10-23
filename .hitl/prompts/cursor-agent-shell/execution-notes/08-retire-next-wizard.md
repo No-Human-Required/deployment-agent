@@ -1,0 +1,31 @@
+# 08-retire-next-wizard — execution note
+
+- 08-retire-next-wizard.md
+  - status: implemented
+  - execution conversation / checkout: hitl-slice-builder / liara-agent (coordinator auto-run claim)
+  - changed files / artifacts:
+    - `apps/web/README.md` — retired stub; points to root Vite shell + `apps/agent`
+    - Removed hollow Next leftovers under `apps/web/` (local `.next/`, `node_modules/`, `.gitignore`, `next-env.d.ts`, `tsconfig.tsbuildinfo`) — no source/`package.json` remained
+    - `README.md` — Architecture: `apps/web` marked retired (not product UI); quick start already Vite + agent
+    - `package.json` — `dev:all` concurrently label `WEB` → `SHELL` (scripts were already Vite/`apps/agent`; no `dev:web`)
+    - Untouched: `apps/agent/**` (BFF preserved)
+  - verification run and results:
+    - `npm run build` — success (`tsc -b && vite build`; dist produced)
+    - Skimmed root README: Quick start = Vite `:5173` + `apps/agent` `:8000`; Next not primary
+  - verification not run and limitations:
+    - Full docs/runbook rewrite deferred to slice 09 (stale “later slice” wording in README Connect section left alone)
+    - Did not run `npm test` / `apps/agent` pytest (out of acceptance)
+    - No pnpm workspace manifest present to update (`pnpm-workspace.yaml` absent)
+  - finalization basis, if finalized: (coordinator owns)
+  - implementation decisions / findings:
+    - `apps/web` was already hollow (no `package.json` / `src/`); retired in place with README-only stub rather than deleting the directory path, so references resolve and intent is explicit
+    - Root scripts already primary on Vite (`dev` / `build` / `dev:all` → agent + Vite); no Next scripts to remove
+    - Product topology unchanged: FE = root `src/` :5173; BFF = `apps/agent` :8000
+  - deviations from prompt: none material; did not expand into slice 09 docs rewrite
+  - specialist findings / selection changes:
+    - technical-documentation: root README + stub README are the minimal reader path to Vite-first run; left PRD/implementation-plan historical Next mentions alone
+    - system-architecture: demote ownership of product UI to Vite shell; leave companion BFF boundary intact; stub directory is documentation ownership only
+  - learning candidates, if any: none (definition matched hollow `apps/web` state)
+  - implications for remaining prompts:
+    - Slice 09 can deepen runbook and clear residual “later slice” / historical plan mentions without re-litigating FE stack
+  - blocking reason / skipped rationale, if applicable: none

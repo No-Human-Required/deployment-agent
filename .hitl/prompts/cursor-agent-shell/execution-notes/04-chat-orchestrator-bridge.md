@@ -1,0 +1,39 @@
+# 04-chat-orchestrator-bridge — execution note
+
+- 04-chat-orchestrator-bridge.md
+  - status: implemented
+  - execution conversation / checkout: hitl-slice-builder / liara-agent (`main-kamyar-before-kobra`)
+  - changed files / artifacts:
+    - `src/lib/schemas.ts` — companion orchestrator Zod contracts (`orchestratorCase`, readiness, plan, approve, operation, `orchestratorRun` session)
+    - `src/lib/api.ts` — typed helpers: `createCase`, `assessReadiness`, `createPlan`, `approvePlan`, `executePlan`, `continueOrStop`, `verifyResult`, `getOperation`; removed thin MVP `runInvestigation` / `submitApproval`
+    - `src/lib/schemas.orchestrator.test.ts` — parse/reject coverage for orchestrator shapes + no-secret assertion
+    - `src/lib/conversations.ts` — store version `2` with `orchestratorRun` (replaces investigation/approvalResult)
+    - `src/lib/conversations.test.ts` — updated for v2 / orchestratorRun
+    - `src/App.tsx` — primary chat path: case → assess → plan → HITL Approve/Reject controls → execute → verify; config gate nudges Settings; free-text approve/reject refused
+    - `src/components/PlanApprovalPanel.tsx` — minimal plan + explicit Approve/Reject UI (EN/FA); GenUI allowlist deferred to 05
+    - `src/components/Inspector.tsx` — case id, stage, timeline, audit events from `orchestratorRun`
+  - verification run and results:
+    - `npm test` — success (3 files, 10 tests)
+    - `npm run build` — success (`tsc -b && vite build`)
+  - verification not run and limitations:
+    - Optional live happy path (agent up + configured settings; send chat goal → plan → approve → execute) not run in this slice
+    - `continueOrStop` / `getOperation` client helpers added but not exercised in UI yet (approve path uses approve → execute → verify)
+    - agent-orchestration skill path referenced by prompt was missing on disk (`.cursor/skills/agent-orchestration/`); followed prompt HITL rules + companion contracts instead
+  - finalization basis, if finalized: (coordinator)
+  - implementation decisions / findings:
+    - Happy path uses stub/LLM draft via `create_plan` without client-supplied plan body; execute only after explicit Approve control calling `approve_plan` then `execute_plan`
+    - Reject is local HITL stop before approve (no provider write); does not treat chat-text “approve” as authorization
+    - Conversation history bumped to version 2; old v1 investigation-shaped history fails soft (“unsupported format”) per existing loader behavior
+    - Legacy `investigationSchema` / `approvalResultSchema` + `GenerativeCard` left in tree for slice 05 GenUI parity; primary chat no longer uses them
+    - Config gate: missing workspace or Liara token → Settings nudge; Aval optional (`use_llm` only when Aval key configured)
+  - deviations from prompt:
+    - None material; optional components used (`PlanApprovalPanel`) within ownership; did not rewrite agent domain services
+  - specialist findings / selection changes:
+    - api-design: client matches `apps/agent` orchestrator BFF bodies/responses; secrets never on orchestrator payloads
+    - ux-design: explicit Approve/Reject; loading/status messages; EN/FA copy on plan panel + Inspector; chat-text approve refused
+    - agent-orchestration: skill file unavailable in workspace; HITL propose≠execute enforced in App + PlanApprovalPanel
+  - learning candidates, if any: none (implementation-only; missing skill file is environment, not a definition gap requiring skill edit)
+  - implications for remaining prompts:
+    - 05 can replace PlanApprovalPanel with full GenUI allowlist cards while keeping orchestrator client helpers
+    - 06 nav pages can reuse `workspace_id` / settings gate patterns from chat
+  - blocking reason / skipped rationale, if applicable: none

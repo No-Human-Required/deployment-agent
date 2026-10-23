@@ -1,0 +1,33 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      # Host 5433 avoids clash with other local Postgres on 5432.
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: liara
+      POSTGRES_PASSWORD: liara
+      POSTGRES_DB: liara_companion
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U liara -d liara_companion"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres_data:
+  redis_data:

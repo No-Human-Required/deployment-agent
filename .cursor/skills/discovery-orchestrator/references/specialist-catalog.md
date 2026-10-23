@@ -5,6 +5,7 @@ All skill paths below are relative to this catalog. Load only relevant bodies. M
 | Skill | Selection signals | Expected contribution |
 | --- | --- | --- |
 | [UX design](../../ux-design/SKILL.md) | Human-facing behavior, interactions, accessibility, visual interpretation | Journeys, state coverage, interaction boundaries, observable experience criteria |
+| [Agent workspace UX](../../agent-workspace-ux/SKILL.md) | Folder-first agent shells, chat threads per workspace, agent progress disclosure, in-chat GenUI/HITL patterns (Cursor-like companions) | Workspace gate, thread scoping, chat vs timeline/inspector, intake timing, global vs project-scoped surfaces |
 | [API design](../../api-design/SKILL.md) | A caller/provider contract changes; integrations or asynchronous interfaces | Contract semantics, failures, authorization boundaries, compatibility and contract checks |
 | [Analytics instrumentation](../../analytics-instrumentation/SKILL.md) | Behavioral analytics, shared tracking packages, event catalogues, identity or consent transitions, acquisition, or experiment measurement | Interpretable measures, event placement and ownership, privacy boundaries, collection quality, and validation against product decisions |
 | [Data modeling](../../data-modeling/SKILL.md) | Persistent structure, invariants, queries, schema evolution or backfills | Model and ownership, integrity constraints, evolution and data verification |

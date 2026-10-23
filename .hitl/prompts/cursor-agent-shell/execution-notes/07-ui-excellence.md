@@ -1,0 +1,36 @@
+# 07-ui-excellence — execution note
+
+- 07-ui-excellence.md
+  - status: implemented
+  - execution conversation / checkout: hitl-slice-builder / liara-agent
+  - changed files / artifacts:
+    - `src/index.css` — hierarchy (chat primary / inspector secondary), GenUI density+contrast, shared loading/empty/error state classes, RTL logical margins, less purple accent noise, settings shell layout
+    - `src/App.tsx` — nav-surface motion (`AnimatePresence` + fade/slide), FA default locale, bilingual sidebar/welcome/composer copy, `logical-end` / `text-start` for RTL
+    - `src/components/PlanApprovalPanel.tsx` — intentional panel + staggered card enter motion
+    - `src/components/agent-ui/GenerativeCard.tsx` — `EnterCard` motion, denser `genui-card` padding/contrast, logical heading actions
+    - `src/components/nav/NavigationView.tsx` — loading spinner states, surface enter motion, RTL logical margins, FA “investigate”
+    - `src/components/SettingsPanel.tsx` — aligned loading/error state cards + settings shell/body layout for FA/RTL
+    - `src/components/Inspector.tsx` — loading row consistency, logical-end margins
+  - verification run and results:
+    - `npm test` — success (5 files, 20 tests)
+    - `npm run build` — success (`tsc -b && vite build`)
+  - verification not run and limitations:
+    - No live browser visual QA against running agent (motion/RTL inspected via code + build only)
+    - No companion pytest (FE-only polish; BFF unchanged)
+    - `prefers-reduced-motion` already global in CSS; not re-verified in a browser
+  - finalization basis, if finalized: (coordinator)
+  - implementation decisions / findings:
+    - Motion-first with existing `motion` package only — three purposeful transitions: nav surface switch, GenUI card enter, approval panel stagger
+    - Default locale set to FA per plan decision (“FA / RTL first-class”); EN remains toggleable
+    - Shared `ui-loading-row` / `nav-state-*` patterns for Settings + nav empty/loading/error consistency
+    - Preserved LiaraOps blue/ops identity; reduced violet/purple avatar and suggestion accents that read as AI-slop
+    - No BFF / schema / API client changes
+  - deviations from prompt:
+    - None material; did not add Three.js/WebXR; did not touch 08/09
+  - specialist findings / selection changes:
+    - ux-design: empty/loading/error made consistent across Settings and nav; chat remains primary hierarchy vs muted inspector; RTL uses logical properties + `dir` on shell
+  - learning candidates, if any: none (implementation-only craft corrections)
+  - implications for remaining prompts:
+    - 08 can retire Next wizard against a polished Vite shell
+    - 09 docs should note FA-default locale and motion-first craft
+  - blocking reason / skipped rationale, if applicable: none

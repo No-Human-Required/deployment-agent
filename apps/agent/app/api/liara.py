@@ -1,0 +1,180 @@
+"""Liara prove-read route — live me + projects; promote registry on success."""
+
+from __future__ import annotations
+
+import uuid
+from typing import Annotated, Any
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
+
+from app.api.deps import get_app_settings, get_db
+from app.config import Settings
+from app.services.liara_client import LiaraClient, LiaraClientError
+from app.services.prove_liara import prove_and_mark_tested
+from app.services.registry import CapabilityNotFound
+from app.services.settings import SettingsService
+
+router = APIRouter(prefix="/api/liara", tags=["liara"])
+
+
+class ProveReadBody(BaseModel):
+    workspace_id: uuid.UUID | None = None
+
+
+def _format_plan_hint(plan: dict[str, Any]) -> str | None:
+    parts: list[str] = []
+    ram = plan.get("RAM") if isinstance(plan.get("RAM"), dict) else None
+    cpu = plan.get("CPU") if isinstance(plan.get("CPU"), dict) else None
+    if ram and ram.get("amount") is not None:
+        parts.append(f"RAM {ram['amount']} GB")
+    if cpu and cpu.get("amount") is not None:
+        parts.append(f"CPU {cpu['amount']}")
+    volume = plan.get("volume")
+    if volume is not None:
+        parts.append(f"Disk {volume} GB")
+    return " · ".join(parts) if parts else None
+
+
+def _public_project_plans(me: dict[str, Any]) -> list[dict[str, object]]:
+    """Extract PaaS planIDs from GET /v1/me (same filter as Liara CLI)."""
+    plans_root = me.get("plans") if isinstance(me.get("plans"), dict) else {}
+    projects = (
+        plans_root.get("projects") if isinstance(plans_root.get("projects"), dict) else {}
+    )
+    out: list[dict[str, object]] = []
+    for plan_id, raw in projects.items():
+        if not isinstance(raw, dict):
+            continue
+        available = bool(raw.get("available"))
+        region = str(raw.get("region") or "")
+        # Match liara-cli promptPlan: free + g2* Iran plans that are available.
+        if not (
+            available
+            and (plan_id == "free" or "g2" in plan_id)
+            and (not region or region == "iran")
+        ):
+            continue
+        out.append(
+            {
+                "id": plan_id,
+                "label": plan_id if plan_id != "free" else "Free",
+                "hint": _format_plan_hint(raw),
+                "available": available,
+                "region": region or None,
+            }
+        )
+    out.sort(key=lambda row: (0 if row["id"] == "free" else 1, str(row["id"])))
+    return out
+
+
+@router.get("/plans")
+def list_plans(
+    db: Annotated[Session, Depends(get_db)],
+    app_settings: Annotated[Settings, Depends(get_app_settings)],
+    workspace_id: Annotated[uuid.UUID | None, Query()] = None,
+) -> dict[str, object]:
+    """Return selectable PaaS planIDs from live GET /v1/me."""
+    settings_svc = SettingsService(db, app_settings)
+    try:
+        token, base_url, team_id = settings_svc.resolve_liara_credentials(workspace_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    client = LiaraClient(
+        token,
+        base_url=base_url,
+        team_id=team_id,
+        timeout=app_settings.liara_http_timeout_seconds,
+    )
+    try:
+        me = client.get_me()
+    except LiaraClientError as exc:
+        raise HTTPException(status_code=502, detail=exc.to_dict()) from exc
+    plans = _public_project_plans(me)
+    return {"plans": plans, "source": "liara_me"}
+
+
+def _public_domain_row(raw: dict[str, Any], *, project: str) -> dict[str, object] | None:
+    """Normalize a Liara domain object for the companion UI (read-only)."""
+    name = raw.get("name")
+    if name is None or not str(name).strip():
+        return None
+    domain_id = raw.get("_id") or raw.get("id") or raw.get("domainID")
+    return {
+        "id": str(domain_id) if domain_id is not None else str(name),
+        "name": str(name),
+        "status": str(raw["status"]) if raw.get("status") is not None else None,
+        "certificates_status": (
+            str(raw["certificatesStatus"])
+            if raw.get("certificatesStatus") is not None
+            else None
+        ),
+        "project": str(raw["project"]) if raw.get("project") is not None else project,
+        "type": str(raw["type"]) if raw.get("type") is not None else None,
+        "cname_record": (
+            str(raw["CNameRecord"]) if raw.get("CNameRecord") is not None else None
+        ),
+    }
+
+
+@router.get("/domains")
+def list_domains(
+    db: Annotated[Session, Depends(get_db)],
+    app_settings: Annotated[Settings, Depends(get_app_settings)],
+    project: Annotated[str, Query(min_length=1)],
+    workspace_id: Annotated[uuid.UUID | None, Query()] = None,
+) -> dict[str, object]:
+    """List domains for a Liara project (workspace token). Read-only — no creates."""
+    project_name = project.strip()
+    if not project_name:
+        raise HTTPException(status_code=400, detail="project is required")
+    settings_svc = SettingsService(db, app_settings)
+    try:
+        token, base_url, team_id = settings_svc.resolve_liara_credentials(workspace_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    client = LiaraClient(
+        token,
+        base_url=base_url,
+        team_id=team_id,
+        timeout=app_settings.liara_http_timeout_seconds,
+    )
+    try:
+        raw_domains = client.list_domains(project=project_name)
+    except LiaraClientError as exc:
+        raise HTTPException(status_code=502, detail=exc.to_dict()) from exc
+    domains: list[dict[str, object]] = []
+    for row in raw_domains:
+        public = _public_domain_row(row, project=project_name)
+        if public is not None:
+            domains.append(public)
+    return {"domains": domains, "project": project_name, "source": "liara_domains"}
+
+
+@router.post("/prove-read")
+def prove_read(
+    body: ProveReadBody,
+    db: Annotated[Session, Depends(get_db)],
+    app_settings: Annotated[Settings, Depends(get_app_settings)],
+) -> dict[str, object]:
+    try:
+        outcome = prove_and_mark_tested(
+            db,
+            workspace_id=body.workspace_id,
+            settings=app_settings,
+        )
+    except CapabilityNotFound as exc:
+        # Subclass of LookupError — must be caught before the generic branch.
+        raise HTTPException(
+            status_code=503,
+            detail=f"capability registry missing {exc}; run seed_registry",
+        ) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except LiaraClientError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=exc.to_dict(),
+        ) from exc
+    return outcome.model_dump()

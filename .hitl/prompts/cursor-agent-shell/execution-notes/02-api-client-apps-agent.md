@@ -1,0 +1,37 @@
+# 02-api-client-apps-agent — execution note
+
+- 02-api-client-apps-agent.md
+  - status: implemented
+  - execution conversation / checkout: hitl-slice-builder / liara-agent (`main-kamyar-before-kobra`)
+  - changed files / artifacts:
+    - `src/lib/schemas.ts` — companion nested `liara` + `aval` redacted `settingsViewSchema`; `proveLiaraReadSchema`, `healthSchema`, `readySchema`, `liaraProjectSummarySchema`
+    - `src/lib/api.ts` — `getSettings` / `saveSettings` / `proveLiaraRead` against `/api/settings` + `/api/liara/prove-read`; `getHealth` / `getReady`; `getServices` maps prove-read projects (interim until 06); no secret echo on save (only forward non-empty secrets)
+    - `src/lib/schemas.settings.test.ts` — parses companion shape; rejects flat thin-backend shape
+    - `vite.config.ts` — proxy `/api`, `/health`, `/ready` → `:8000`
+    - `src/App.tsx` — minimal nested `view.liara.*` wiring so typecheck/build pass; removed Settings `allow_live_writes` toggle (not on companion public model)
+    - `README.md`, `.env.example`, `package.json` (`dev:agent` / `dev:all` → `apps/agent` uvicorn, not `backend/`)
+  - verification run and results:
+    - `npm run build` — success (`tsc -b && vite build`)
+    - `npm test` — success (2 files, 7 tests; includes new settings schema tests)
+    - Live BFF (coordinator after source restore): `GET /health` → ok; `GET /ready` → ready/database true; `GET /api/settings` → nested redacted companion shape (200)
+    - `apps/agent` pytest — 87 passed (sources restored from subagent transcript replay + pyc size verification)
+  - verification not run and limitations:
+    - Investigation/approval client paths still thin-MVP shaped (out of scope; slice 04)
+  - finalization basis, if finalized: auto, verified against agreed criteria (coordinator)
+  - implementation decisions / findings:
+    - Settings public model is nested `{ workspace_id, liara: { api_base_url, team_id, token_configured, token_label }, aval: { base_url, model, api_key_configured, api_key_label } }` — no `mode` / `allow_live_writes` on GET
+    - PUT clears team id via empty string; omit secrets to keep previous
+    - Vite same-origin proxy means browser CORS to `:8000` is unnecessary
+    - Services catalog interim: map `POST /api/liara/prove-read` `projects[]` → `Service[]`
+    - Minimal App.tsx edits required for build after schema change (full Aval UX = slice 03)
+  - deviations from prompt:
+    - Touched `src/App.tsx` beyond `src/lib/**` ownership solely so `tsc`/build accept nested settings (required acceptance)
+  - specialist findings / selection changes:
+    - api-design: client matches companion redacted view + prove-read; secrets one-way on PUT
+    - system-architecture: product FE = root Vite; product BFF = `apps/agent` on `:8000`
+  - learning candidates, if any: none
+  - implications for remaining prompts:
+    - 03 can add Aval fields + richer settings UX on nested schema
+    - 04 must replace investigation/approval with orchestrator BFF
+    - 06 should replace prove-read-based `getServices` with dedicated list APIs
+  - blocking reason / skipped rationale, if applicable: none (soft blocker cleared — `apps/agent` sources restored)

@@ -1,0 +1,38 @@
+# 05-domains-live — execution note
+
+- 05-domains-live.md
+  - status: implemented
+  - execution conversation / checkout: hitl-slice-builder / liara-agent (repo root)
+  - changed files / artifacts:
+    - `apps/agent/app/api/liara.py` — `GET /api/liara/domains?project=&workspace_id=` via `LiaraClient.list_domains`; `_public_domain_row` normalizer; 400 missing token, 502 Liara errors
+    - `apps/agent/tests/test_liara_domains.py` — mocked client: ok list, empty, missing token/project, unauthorized + shape errors
+    - `src/lib/schemas.ts` — `liaraDomainSchema` / `liaraDomainsResultSchema` + types
+    - `src/lib/api.ts` — `getDomains(project, workspaceId?)`
+    - `src/lib/schemas.nav.test.ts` — domains parse / reject coverage
+    - `src/components/nav/NavigationView.tsx` — live Domains surface: project selector, list/empty/error, refresh; CTA `onStartDomainGoal` (no nav writes)
+    - `src/App.tsx` — `onStartDomainGoal` starts orchestrator chat goal (HITL path via existing intake/plan)
+    - `src/index.css` — domain project select styles
+  - verification run and results:
+    - `cd apps/agent && uv run pytest tests/test_liara_domains.py -q` — 8 passed
+    - `npm test -- --run` — 8 files, 43 passed
+  - verification not run and limitations:
+    - No live Liara GET domains against a real account
+    - No live domain create/attach/SSL (intentionally; nav is read-only + chat CTA)
+    - `npm run build` not run
+    - Manual browser walkthrough of Domains nav not run
+  - finalization basis, if finalized: (coordinator owns)
+  - implementation decisions / findings:
+    - Read-only BFF list mirrors `/plans` credential resolution (workspace token → LiaraClient).
+    - Public row shape: id, name, status, certificates_status, project, type, cname_record — no inventing rows on failure.
+    - Domains UI requires token + at least one project from existing services catalog; project picker defaults to first service.
+    - Attach path: CTA starts chat goal with optional project name → existing GenUI intake + HITL Approve (slice 04); nav never calls create/set/ssl.
+    - Optional check-domain endpoint deferred — list status fields sufficient for nav; check remains on write/ops path.
+  - deviations from prompt: none material (check route omitted as optional “if useful”).
+  - specialist findings / selection changes:
+    - api-design: smallest read contract; mutations stay WriteGuard/HITL — applied.
+    - investigation-debugging: gap was missing BFF + stub UI, not missing Liara client methods — applied.
+    - ux-design: empty/error/loading + Settings/chat recovery; no fake domains — applied.
+  - learning candidates, if any: none
+  - implications for remaining prompts:
+    - Slice 06 can exercise Domains nav list + chat attach HITL in challenge smoke; no further Domains stub expected.
+  - blocking reason / skipped rationale, if applicable: none

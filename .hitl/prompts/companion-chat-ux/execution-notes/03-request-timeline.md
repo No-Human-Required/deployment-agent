@@ -1,0 +1,33 @@
+# 03-request-timeline — execution note
+
+- 03-request-timeline.md
+  - status: implemented
+  - execution conversation / checkout: hitl-slice-builder / liara-agent (repo root)
+  - changed files / artifacts:
+    - `src/lib/requestTimeline.ts` — `inferGoalIntent`, `labelPlanStepAction`, `buildRequestTimeline`, `timelineStatusLabel`; intent stubs until plan; prefer `plan_body.steps`; HITL/run phases; FA/EN copy; no UUID-as-primary detail
+    - `src/lib/requestTimeline.test.ts` — intent split, plan alignment, status progression, no create_case/assess_readiness primary titles
+    - `src/lib/schemas.ts` — export `PlanVersion` / `PlanStep` types for the helper
+    - `src/App.tsx` — rebuild Inspector timeline via `buildRequestTimeline` on assess/plan/approve/execute/verify/error/reject; chat still quiet (no timeline bubbles)
+    - `src/components/Inspector.tsx` — show human `detail` under titles (not raw `tool`); localized status labels
+  - verification run and results:
+    - `npm test -- --run` — 7 files, 34 passed
+  - verification not run and limitations:
+    - No manual browser walkthrough of Inspector during a live orchestrator run
+    - `npm run build` not run
+    - No live Liara writes
+  - finalization basis, if finalized: (coordinator owns)
+  - implementation decisions / findings:
+    - Rebuild timeline from stage + goal + optional `plan_body` rather than mutating create_case/assess_readiness rows — keeps labels request-derived and FA/EN-friendly.
+    - Stable keys stay in `tool` (`prep.*`, `plan.<id>`, `hitl.approve`, `run.execute`, `run.verify`) for identity only; Inspector no longer surfaces them as secondary text.
+    - Before plan: intent heuristics (deploy / troubleshoot / domain / maintain / generic) drive stub titles so deploy ≠ troubleshoot wording.
+    - After plan: plan step actions become primary titles; approve/execute/verify appended as user-facing phases; details avoid plan/case/operation UUIDs.
+    - Chat path unchanged from 02 — no timeline dump into bubbles.
+  - deviations from prompt: none material.
+  - specialist findings / selection changes:
+    - agent-workspace-ux: progress disclosure in Inspector, not chat — applied.
+    - ux-design: pending/done/waiting/error/rejected states + FA labels — applied. No skill selection change.
+  - learning candidates, if any: none (definition matched implementation).
+  - implications for remaining prompts:
+    - Slice 04 (GenUI intake) can assume Inspector timeline already humanized; intake cards remain chat-side.
+    - Slice 06 can assert timeline titles are not create_case/assess_readiness when exercising challenge journeys.
+  - blocking reason / skipped rationale, if applicable: none

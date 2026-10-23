@@ -1,0 +1,33 @@
+# 03-settings-shell — execution note
+
+- 03-settings-shell.md
+  - status: implemented
+  - execution conversation / checkout: hitl-slice-builder / liara-agent (`main-kamyar-before-kobra`)
+  - changed files / artifacts:
+    - `src/components/SettingsPanel.tsx` — new Settings surface: Liara (base URL, team id, token rotate) + Aval (base URL, model, API key rotate); EN/FA copy; loading/error/ready states; prove Liara read; configured badges + `*_label` hints; password inputs never prefilled from GET
+    - `src/App.tsx` — Settings nav delegates to `SettingsPanel`; tracks `settingsLoadState` / `settingsLoadError`; removes Liara-only form state/handlers
+    - `src/index.css` — settings section / label-hint polish (RTL letter-spacing tweak)
+  - verification run and results:
+    - `npm test` — success (2 files, 7 tests)
+    - `npm run build` — success (`tsc -b && vite build`)
+  - verification not run and limitations:
+    - Live optional check (save Aval fields then `GET /api/settings` via Vite proxy) not run in this slice — requires running `apps/agent` + browser/manual PUT; client contract already matches nested redacted view from slice 02
+    - No new component unit tests for `SettingsPanel` (acceptance covered by existing schema tests + build)
+  - finalization basis, if finalized: (coordinator)
+  - implementation decisions / findings:
+    - Extracted `SettingsPanel` rather than growing inline App Settings block; App keeps `settingsView` for topbar LIVE MODE + catalog gate
+    - Save body always sends non-secret Liara/Aval fields; secrets (`liara_api_token`, `llm_api_key`) only when user typed a non-empty value (aligned with `saveSettings` omit-empty behavior)
+    - Empty team id still sent as `""` so companion clears per contract
+    - Aval defaults when view null/empty: base `https://api.avalai.ir/v1`, model `gpt-5.6-luna`
+    - Status rows show configured/not for both Liara token and Aval key; labels shown when present — never raw secrets
+    - generative-ui skill not present under `.cursor/skills/`; used existing Card + status badges instead of a GenUI status card
+  - deviations from prompt:
+    - Touched `src/index.css` (small Settings layout styles) beyond listed ownership files — needed for section separation / label hints
+  - specialist findings / selection changes:
+    - ux-design: loading/error/ready + secret rotate placeholders; FA/RTL copy on Settings surface; prove-read messaging kept
+    - api-design: no schema/API client changes required — slice 02 nested `SettingsUpdateBody` / redacted GET already sufficient
+  - learning candidates, if any: none (implementation-only)
+  - implications for remaining prompts:
+    - 04 can assume workspace settings UX exists for Liara + Aval before chat/orchestrator
+    - 07 may further polish Settings motion/visual; core fields already present
+  - blocking reason / skipped rationale, if applicable: none
