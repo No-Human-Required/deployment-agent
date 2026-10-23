@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.agent import router as agent_router
 from app.api.conversations import router as conversations_router
 from app.api.liara import router as liara_router
 from app.api.local_fs import router as local_fs_router
@@ -20,10 +21,16 @@ async def lifespan(_app: FastAPI):
     try:
         factory = get_session_factory()
         with factory() as session:
-            inserted = CapabilityRegistry(session).seed()
+            registry = CapabilityRegistry(session)
+            inserted = registry.seed()
+            from app.services.registry import ensure_live_devops_tools_enabled
+
+            promoted = ensure_live_devops_tools_enabled(registry)
             session.commit()
             if inserted:
                 print(f"capability registry seeded; inserted={inserted}")
+            if promoted:
+                print(f"live DevOps tools enabled: {', '.join(promoted)}")
     except Exception as exc:  # noqa: BLE001 — startup must not crash on empty DB
         print(f"capability registry seed skipped: {exc}")
     yield
@@ -47,6 +54,7 @@ app.include_router(liara_router)
 app.include_router(local_fs_router)
 app.include_router(orchestrator_router)
 app.include_router(maintain_router)
+app.include_router(agent_router)
 
 
 @app.get("/health")

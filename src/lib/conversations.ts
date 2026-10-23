@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { normalizeWorkspaceKey } from "./workspace";
 import { orchestratorRunSchema } from "./schemas";
+import { agentRunViewSchema } from "./agentRuns";
 
 const quickReplySchema = z.object({
   id: z.string().min(1),
@@ -23,6 +24,7 @@ const chatMessageSchema = z.object({
   text: z.string(),
   kind: z.enum(["demo", "live"]).optional(),
   quickReplies: z.array(quickReplySchema).max(8).optional(),
+  agentRun: agentRunViewSchema.optional(),
 });
 
 const contextServiceSchema = z.object({

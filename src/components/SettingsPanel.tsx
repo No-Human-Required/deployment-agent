@@ -32,7 +32,7 @@ function formatIrt(value: number | null | undefined): string {
 
 const DEFAULT_LIARA_BASE = "https://api.liara.ir";
 const DEFAULT_AI_BASE = "https://api.avalai.ir/v1";
-const DEFAULT_AI_MODEL = "gpt-5.6-luna";
+const DEFAULT_AI_MODEL = "deepseek-v4.1-flash";
 
 type LoadState = "loading" | "ready" | "error";
 

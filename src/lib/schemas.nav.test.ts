@@ -103,21 +103,84 @@ describe("nav surface companion schemas", () => {
         isDeployed: true,
         plan_id: "free",
         region: "iran",
+        scale: 1,
+        default_url: "https://demo-app.liara.run",
+        kind: "app",
       },
-      cpu: { available: true, series: { data: [{ t: 1, v: 12 }] } },
-      memory: { available: true, series: { data: [{ t: 1, v: 256 }] } },
+      plan: {
+        id: "free",
+        label: "Free",
+        hint: "RAM 0.5 GB · CPU 0.5",
+        price_monthly: 0,
+        ram_gb: 0.5,
+      },
+      domains: [
+        {
+          id: "dom-1",
+          name: "app.example.com",
+          status: "ACTIVE",
+          certificates_status: "ACTIVE",
+          project: "demo-app",
+        },
+      ],
+      cpu: { available: true, series: { data: [{ t: 1, v: 12 }] }, latest: 12 },
+      memory: { available: true, series: { data: [{ t: 1, v: 256 }] }, latest: 256 },
       logs: {
         available: true,
-        lines: [{ message: "boot ok", timestamp: "2026-10-23T10:00:00Z" }],
+        lines: [
+          {
+            message: "boot ok",
+            timestamp: "2026-10-23T10:00:00Z",
+            stream: "stdout",
+          },
+        ],
         truncated: false,
       },
       gaps: [],
       source: "liara_monitoring",
     });
     expect(parsed.project.name).toBe("demo-app");
+    expect(parsed.project.default_url).toBe("https://demo-app.liara.run");
+    expect(parsed.plan?.id).toBe("free");
+    expect(parsed.domains).toHaveLength(1);
     expect(parsed.cpu.available).toBe(true);
+    expect(parsed.cpu.latest).toBe(12);
     expect(parsed.logs.lines).toHaveLength(1);
+    expect(parsed.logs.lines[0]?.stream).toBe("stdout");
     expect(parsed.gaps).toEqual([]);
+  });
+
+  it("parses database monitoring payload", () => {
+    const parsed = liaraProjectMonitoringSchema.parse({
+      project: {
+        name: "demo-postgres",
+        project_id: "db-1",
+        type: "postgres",
+        status: "RUNNING",
+        plan_id: "small-g2",
+        version: "16.14",
+        volume_size_gb: 5,
+        kind: "database",
+      },
+      plan: {
+        id: "small-g2",
+        label: "small-g2",
+        price_monthly: 475000,
+        ram_gb: 1,
+      },
+      domains: [],
+      cpu: { available: false, series: null, latest: null },
+      memory: { available: false, series: null, latest: null },
+      logs: { available: false, lines: [], truncated: false },
+      gaps: [
+        { source: "cpu", reason: "not_applicable", message: "CPU metrics not exposed" },
+      ],
+      source: "liara_database_monitoring",
+    });
+    expect(parsed.project.kind).toBe("database");
+    expect(parsed.project.version).toBe("16.14");
+    expect(parsed.plan?.price_monthly).toBe(475000);
+    expect(parsed.domains).toEqual([]);
   });
 
   it("parses monitoring with soft gaps", () => {

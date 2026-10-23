@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import tempfile
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -51,13 +52,16 @@ from app.services.dependencies import (
     execute_dependency_steps,
 )
 from app.services.deploy import (
+    DEFAULT_PAAS_PLAN_ID,
     OP_STATE_DEPLOYED,
     OP_STATE_UNKNOWN,
     OP_STATE_VERIFIED,
     OP_STATE_VERIFY_FAILED,
     build_node_next_plan,
+    ensure_deploy_archive,
     execute_deploy_steps,
     live_writes_allowed,
+    normalize_paas_plan_id,
     promote_deploy_tools_tested,
     verify_deploy,
 )
@@ -85,7 +89,8 @@ from app.services.patch import (
     release_scope,
     run_sandbox,
 )
-from app.services.registry import CapabilityRegistry
+from app.services.deploy_root import default_liara_app_url
+from app.services.registry import CapabilityRegistry, ensure_live_devops_tools_enabled
 from app.services.secrets import SecretService
 from app.services.settings import SettingsService
 from app.services.troubleshoot import (
@@ -408,6 +413,22 @@ class OrchestratorService:
             labels.append(str(label))
         return labels
 
+    def _project_exists_on_account(
+        self, workspace_id: uuid.UUID, project_name: str
+    ) -> bool:
+        """Read-only existence check — used to omit create_project on redeploy."""
+        name = (project_name or "").strip()
+        if not name:
+            return False
+        client = self.resolve_liara_client(workspace_id)
+        if client is None:
+            return False
+        try:
+            client.get_project(name)
+            return True
+        except Exception:  # noqa: BLE001 — treat unknown as new publish
+            return False
+
     def _enrich_case_with_dependencies(
         self,
         case: Case,
@@ -418,6 +439,8 @@ class OrchestratorService:
         """Discover file-backed deps, persist GenUI plan on case, return summary dict."""
         discovery = discover_dependencies(app_path)
         registry = CapabilityRegistry(self._session)
+        # Do not auto-enable create tools here — readiness must stay honest.
+        # Fullstack draft/execute calls ensure_live_devops_tools_enabled separately.
         constraints = case.constraints if isinstance(case.constraints, dict) else {}
         pending = list(constraints.get("pending_resources") or [])
         view = build_dependency_plan_view(
@@ -537,18 +560,37 @@ class OrchestratorService:
         if deploy_cfg.get("archive_path") and deploy_cfg.get("project_name"):
             platform = str(deploy_cfg.get("platform") or "node")
             project_name = str(deploy_cfg["project_name"])
+            app_path_hint = deploy_cfg.get("app_path") or constraints.get("app_path")
+            try:
+                archive = ensure_deploy_archive(
+                    app_path=str(app_path_hint) if app_path_hint else None,
+                    archive_path=str(deploy_cfg["archive_path"]),
+                )
+            except (OSError, RuntimeError, FileNotFoundError):
+                archive = str(deploy_cfg["archive_path"])
+            exists = self._project_exists_on_account(case.workspace_id, project_name)
             summary = self._deploy_summary_with_prereqs(
                 case,
-                goal_prefix=f"اولین انتشار برای: {case.goal[:200]}",
-                app_path=deploy_cfg.get("app_path") or constraints.get("app_path"),
+                goal_prefix=(
+                    f"انتشار مجدد برای: {case.goal[:200]}"
+                    if exists
+                    else f"اولین انتشار برای: {case.goal[:200]}"
+                ),
+                app_path=app_path_hint,
                 project_name=project_name,
             )
-            return build_node_next_plan(
+            plan = build_node_next_plan(
                 project_name=project_name,
-                plan_id=str(deploy_cfg.get("plan_id") or deploy_cfg.get("planID") or "free"),
+                plan_id=normalize_paas_plan_id(
+                    str(
+                        deploy_cfg.get("plan_id")
+                        or deploy_cfg.get("planID")
+                        or DEFAULT_PAAS_PLAN_ID
+                    )
+                ),
                 platform=platform,
                 port=int(deploy_cfg.get("port") or 3000),
-                archive_path=str(deploy_cfg["archive_path"]),
+                archive_path=archive,
                 network=(
                     str(deploy_cfg["network"])
                     if deploy_cfg.get("network") is not None
@@ -566,6 +608,20 @@ class OrchestratorService:
                     else None
                 ),
                 summary=summary,
+                include_create_project=not exists,
+            )
+            if app_path_hint:
+                for step in plan.get("steps") or []:
+                    if isinstance(step, dict) and step.get("tool_id") == "sources":
+                        params = dict(step.get("params") or {})
+                        params["app_path"] = str(app_path_hint)
+                        step["params"] = params
+            return self._merge_fullstack_deploy_plan(
+                case,
+                plan,
+                app_path=app_path_hint,
+                project_name=project_name,
+                db_plan_id="small-g2",
             )
 
         # Infer Node/Next from app_path readiness when present.
@@ -577,23 +633,50 @@ class OrchestratorService:
                 if deploy_cfg.get("project_name")
                 else f"demo-{uuid.uuid4().hex[:8]}"
             )
-            archive = deploy_cfg.get("archive_path") or str(
-                Path(app_path) / "source.tar.gz"
+            preferred = deploy_cfg.get("archive_path") or str(
+                Path(tempfile.gettempdir()) / f"liara-src-{name}.tar.gz"
             )
+            try:
+                archive = ensure_deploy_archive(
+                    app_path=app_path, archive_path=str(preferred)
+                )
+            except (OSError, RuntimeError, FileNotFoundError):
+                archive = str(preferred)
             platform = "next" if readiness.platform == "next" else "node"
+            exists = self._project_exists_on_account(case.workspace_id, name)
             summary = self._deploy_summary_with_prereqs(
                 case,
-                goal_prefix=f"طرح استقرار برای: {case.goal[:200]}",
+                goal_prefix=(
+                    f"انتشار مجدد برای: {case.goal[:200]}"
+                    if exists
+                    else f"طرح استقرار برای: {case.goal[:200]}"
+                ),
                 app_path=app_path,
                 project_name=name,
             )
-            return build_node_next_plan(
+            plan = build_node_next_plan(
                 project_name=name,
-                plan_id=str(deploy_cfg.get("plan_id") or "free"),
+                plan_id=normalize_paas_plan_id(
+                    str(deploy_cfg.get("plan_id") or DEFAULT_PAAS_PLAN_ID)
+                ),
                 platform=platform,
                 port=int(deploy_cfg.get("port") or readiness.detected_port or 3000),
                 archive_path=str(archive),
                 summary=summary,
+                include_create_project=not exists,
+            )
+            # Keep app_path on upload step so execute can re-pack if needed.
+            for step in plan.get("steps") or []:
+                if isinstance(step, dict) and step.get("tool_id") == "sources":
+                    params = dict(step.get("params") or {})
+                    params["app_path"] = app_path
+                    step["params"] = params
+            return self._merge_fullstack_deploy_plan(
+                case,
+                plan,
+                app_path=app_path,
+                project_name=name,
+                db_plan_id="small-g2",
             )
 
         stub = {
@@ -812,6 +895,7 @@ class OrchestratorService:
             return None
 
         registry = CapabilityRegistry(self._session)
+        ensure_live_devops_tools_enabled(registry)
         pending = list(constraints.get("pending_resources") or [])
         view = build_dependency_plan_view(
             discovery,
@@ -819,7 +903,9 @@ class OrchestratorService:
             pending_resources=pending,
             project_name=str(deps_cfg.get("project_name") or "app"),
             hostname_prefix=str(deps_cfg.get("hostname_prefix") or "dep"),
-            plan_id=str(deps_cfg.get("plan_id") or deps_cfg.get("planID") or "small"),
+            plan_id=str(
+                deps_cfg.get("plan_id") or deps_cfg.get("planID") or "ir-small"
+            ),
         )
         # Persist plan view on case for GenUI.
         constraints = dict(constraints)
@@ -830,6 +916,71 @@ class OrchestratorService:
 
         body = build_deps_plan_body(view, only_enabled=False)
         return body
+
+    def _merge_fullstack_deploy_plan(
+        self,
+        case: Case,
+        deploy_plan: dict[str, Any],
+        *,
+        app_path: Any,
+        project_name: str,
+        db_plan_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Prepend enabled DB/disk creates into a deploy plan (create → deps → publish)."""
+        path = app_path if isinstance(app_path, str) and app_path.strip() else None
+        if not path:
+            return deploy_plan
+
+        registry = CapabilityRegistry(self._session)
+        ensure_live_devops_tools_enabled(registry)
+        discovery = discover_dependencies(path)
+        if not discovery.required_kinds:
+            return deploy_plan
+
+        constraints = case.constraints if isinstance(case.constraints, dict) else {}
+        pending = list(constraints.get("pending_resources") or [])
+        view = build_dependency_plan_view(
+            discovery,
+            registry=registry,
+            pending_resources=pending,
+            project_name=project_name,
+            hostname_prefix=(project_name[:12] or "dep").replace("_", "-"),
+            plan_id=str(db_plan_id or "small-g2"),
+        )
+        constraints = dict(constraints)
+        constraints["dependency_plan"] = view.to_dict()
+        constraints["dependency_discovery"] = discovery.to_dict()
+        case.constraints = constraints
+        self._session.flush()
+
+        deps_body = build_deps_plan_body(view, only_enabled=True)
+        dep_steps = list((deps_body or {}).get("steps") or [])
+        if not dep_steps:
+            return deploy_plan
+
+        deploy_steps = [
+            s for s in (deploy_plan.get("steps") or []) if isinstance(s, dict)
+        ]
+        create_steps = [s for s in deploy_steps if s.get("tool_id") == "create_project"]
+        publish_steps = [s for s in deploy_steps if s.get("tool_id") != "create_project"]
+        # Disk needs the PaaS project; DB is account-level. Order: create → deps → publish.
+        merged_steps = create_steps + dep_steps + publish_steps
+        kinds = ", ".join(discovery.required_kinds)
+        merged = dict(deploy_plan)
+        merged["steps"] = merged_steps
+        merged["effects"] = list(
+            dict.fromkeys(
+                list(deploy_plan.get("effects") or [])
+                + list((deps_body or {}).get("effects") or [])
+            )
+        )
+        base_summary = str(deploy_plan.get("summary") or "").rstrip(" .")
+        merged["summary"] = (
+            f"{base_summary}. فول‌استک: ابتدا {kinds}، سپس انتشار اپ "
+            f"({default_liara_app_url(project_name)})."
+        )
+        merged["fullstack"] = True
+        return merged
 
     def _deploy_summary_with_prereqs(
         self,
@@ -851,12 +1002,11 @@ class OrchestratorService:
                 parts.append(
                     "پیش‌نیازهای زیرساخت: "
                     + "، ".join(kinds)
-                    + " — قبل یا همزمان با اپ باید آماده شوند (اتصال و env جداگانه)."
+                    + " — در همین طرح قبل از انتشار اپ ساخته و env وصل می‌شود."
                 )
                 if not dep_ctx.get("can_claim_complete_success"):
                     parts.append(
-                        "ساخت خودکار دیتابیس/دیسک هنوز فعال نیست؛ "
-                        "در صورت نیاز از کنسول لیارا بسازید و URL را در Secrets ذخیره کنید."
+                        "اگر ساخت خودکار مسدود باشد، از کنسول لیارا بسازید و URL را در Secrets ذخیره کنید."
                     )
             else:
                 parts.append("در اسکن پروژه پیش‌نیاز DB/Redis/Disk دیده نشد.")
@@ -1075,6 +1225,151 @@ class OrchestratorService:
 
         if skip_write:
             checkpoint = {"mode": "skip_write", "provider_write": False}
+        elif has_deps and has_deploy:
+            # Fullstack: create_project → DB/disk (+ env wire) → sources/releases.
+            client = self.resolve_liara_client(workspace_id)
+            from app.services.write_guard import noop_provider_write
+
+            if (
+                client is not None
+                and self.write_guard._provider_write is noop_provider_write  # noqa: SLF001
+            ):
+                self.write_guard = WriteGuard(liara_client=client)
+
+            prior = self._latest_unknown_for_plan(workspace_id, plan.id)
+            prior_cp = dict(prior.checkpoint or {}) if prior else {}
+            registry = CapabilityRegistry(self._session)
+            ensure_live_devops_tools_enabled(registry)
+            secrets = SecretService(self._session, self._settings)
+            case = self._session.get(Case, plan.case_id)
+
+            deploy_steps = [
+                s for s in validated.steps if (s.tool_id or "") in deploy_tools
+            ]
+            create_steps = [
+                s for s in deploy_steps if (s.tool_id or "") == "create_project"
+            ]
+            publish_steps = [
+                s for s in deploy_steps if (s.tool_id or "") != "create_project"
+            ]
+            dep_steps = [
+                s for s in validated.steps if (s.tool_id or "") in DEP_WRITE_TOOLS
+            ]
+
+            provider_seed = dict(prior_cp.get("provider_ids") or {})
+            project_name = self._project_name_from_plan(validated)
+            if project_name:
+                provider_seed.setdefault("project_name", project_name)
+            # So env-wire can read the workspace ``.env`` for real IMAP/SMTP/VAPID.
+            case_constraints = (
+                dict(case.constraints)
+                if case is not None and isinstance(case.constraints, dict)
+                else {}
+            )
+            app_path_seed = case_constraints.get("app_path")
+            dep_plan = case_constraints.get("dependency_plan")
+            if not app_path_seed and isinstance(dep_plan, dict):
+                discovery = dep_plan.get("discovery")
+                if isinstance(discovery, dict):
+                    app_path_seed = discovery.get("app_root")
+            if isinstance(app_path_seed, str) and app_path_seed.strip():
+                provider_seed.setdefault("app_path", app_path_seed.strip())
+
+            write_count = 0
+            all_attempts: list[Any] = []
+            if create_steps:
+                create_result = execute_deploy_steps(
+                    plan=PlanVersion(
+                        version=validated.version,
+                        steps=create_steps,
+                        effects=["create_paas_app"],
+                        summary="create project before deps",
+                        target_platform=validated.target_platform,
+                    ),
+                    write_guard=self.write_guard,
+                    liara_client=client,
+                    prior_checkpoint={**prior_cp, "provider_ids": provider_seed},
+                )
+                provider_seed.update(create_result.provider_ids)
+                write_count += create_result.write_count
+                all_attempts.extend(create_result.attempts)
+
+            dep_result = execute_dependency_steps(
+                plan=PlanVersion(
+                    version=validated.version,
+                    steps=dep_steps,
+                    effects=["provision_dependencies"],
+                    summary="provision dependencies",
+                ),
+                write_guard=self.write_guard,
+                registry=registry,
+                liara_client=client,
+                secrets=secrets,
+                workspace_id=workspace_id,
+                case=case,
+                prior_checkpoint={**prior_cp, "provider_ids": provider_seed},
+                session=self._session,
+            )
+            provider_seed.update(dep_result.provider_ids)
+            write_count += dep_result.write_count
+            all_attempts.extend(dep_result.attempts)
+
+            if not publish_steps:
+                raise OrchestratorError(
+                    "fullstack plan missing publish steps",
+                    code="fullstack_missing_publish",
+                )
+            deploy_result = execute_deploy_steps(
+                plan=PlanVersion(
+                    version=validated.version,
+                    steps=publish_steps,
+                    effects=list(validated.effects or []),
+                    cost_known=validated.cost_known,
+                    cost_summary=validated.cost_summary,
+                    summary=validated.summary,
+                    target_platform=validated.target_platform,
+                ),
+                write_guard=self.write_guard,
+                liara_client=client,
+                prior_checkpoint={**prior_cp, "provider_ids": provider_seed},
+            )
+            provider_seed.update(deploy_result.provider_ids)
+            write_count += deploy_result.write_count
+            all_attempts.extend(deploy_result.attempts)
+
+            if project_name and not provider_seed.get("app_url"):
+                provider_seed["app_url"] = default_liara_app_url(project_name)
+
+            checkpoint = deploy_result.to_checkpoint()
+            checkpoint["provider_ids"] = provider_seed
+            checkpoint["mode"] = "fullstack_deploy"
+            checkpoint["dep_state"] = dep_result.state
+            checkpoint["dep_attempts"] = [a.to_dict() for a in dep_result.attempts]
+            checkpoint["open_needs"] = list(
+                (dep_result.to_checkpoint().get("open_needs") or [])
+            )
+            checkpoint["pending_resources"] = list(
+                (dep_result.to_checkpoint().get("pending_resources") or [])
+            )
+            checkpoint["write_count"] = write_count
+            checkpoint["attempts"] = [
+                a.to_dict() if hasattr(a, "to_dict") else a for a in all_attempts
+            ]
+            if case is not None and isinstance(case.constraints, dict):
+                dep_plan = case.constraints.get("dependency_plan")
+                if isinstance(dep_plan, dict):
+                    checkpoint["dependency_plan"] = dep_plan
+            # Prefer deploy outcome; surface dep failure as open needs.
+            state = deploy_result.state
+            if deploy_result.state == OP_STATE_DEPLOYED and dep_result.state in (
+                "deps_blocked",
+                "handoff",
+                "unknown",
+            ):
+                checkpoint["complete_success"] = False
+            fingerprint = (
+                all_attempts[0].fingerprint if all_attempts else None
+            )
         elif has_deps:
             client = self.resolve_liara_client(workspace_id)
             from app.services.write_guard import noop_provider_write
@@ -1088,6 +1383,7 @@ class OrchestratorService:
             prior = self._latest_unknown_for_plan(workspace_id, plan.id)
             prior_cp = dict(prior.checkpoint or {}) if prior else {}
             registry = CapabilityRegistry(self._session)
+            ensure_live_devops_tools_enabled(registry)
             secrets = SecretService(self._session, self._settings)
             case = self._session.get(Case, plan.case_id)
             result = execute_dependency_steps(
@@ -2023,7 +2319,15 @@ class OrchestratorService:
             for n in dep_open
         ) or checkpoint.get("can_claim_complete_success") is False
 
-        if checkpoint.get("mode") == "phase4_dependencies" or dep_blocks:
+        phase4_mode = checkpoint.get("mode") == "phase4_dependencies"
+        has_phase1_release = bool(
+            provider_ids.get("releaseID") or checkpoint.get("mode") == "phase1_deploy"
+        )
+
+        # Pure dependency plans stay blocked when creates are gated (L-D05).
+        # Phase-1 deploy with a recorded release must NOT be forced into blocked —
+        # open deps are warnings / incomplete success, not a failed publish.
+        if phase4_mode or (dep_blocks and not has_phase1_release):
             checkpoint["verified_at"] = _utcnow().isoformat()
             checkpoint["verify_mode"] = "phase4_dependencies"
             checkpoint["complete_success"] = False if dep_blocks else True
@@ -2038,20 +2342,28 @@ class OrchestratorService:
             else:
                 op.checkpoint = checkpoint
                 op.state = OP_STATE_VERIFIED_STUB
-        elif provider_ids.get("releaseID") or checkpoint.get("mode") == "phase1_deploy":
+        elif has_phase1_release:
             client = self.resolve_liara_client(workspace_id)
+            project_for_url = str(provider_ids.get("project_name") or "").strip()
+            resolved_url = (
+                app_url
+                or provider_ids.get("app_url")
+                or (default_liara_app_url(project_for_url) if project_for_url else None)
+            )
+            if resolved_url and not provider_ids.get("app_url"):
+                provider_ids["app_url"] = resolved_url
+                checkpoint["provider_ids"] = provider_ids
             verification = verify_deploy(
                 provider_ids=provider_ids,
                 liara_client=client,
-                app_url=app_url or provider_ids.get("app_url"),
+                app_url=resolved_url,
                 http_get=http_get,
+                require_http=bool(resolved_url),
             )
-            # Required deps from case still block "complete" even if release ok.
             if dep_blocks:
                 verification = dict(verification)
-                verification["ok"] = False
                 verification["complete_success"] = False
-                verification["blocked_by_dependencies"] = True
+                verification["dependency_warnings"] = list(dep_open)
                 checkpoint["open_needs"] = dep_open
             checkpoint["verification"] = verification
             checkpoint["verified_at"] = verification.get("verified_at")

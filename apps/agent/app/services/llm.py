@@ -78,3 +78,20 @@ class LlmService:
             model=cfg.model,
             temperature=0,
         )
+
+    def build_agent_model(self, workspace_id: uuid.UUID | None = None) -> BaseChatModel:
+        """Tool-calling model for the autonomous DevOps loop (long turns, retries)."""
+        cfg = self.resolve_config(workspace_id)
+        if cfg is None:
+            raise LlmNotConfigured(
+                "Aval AI not configured — set the API key in Settings before running the agent"
+            )
+        return ChatOpenAI(
+            base_url=cfg.base_url,
+            api_key=cfg.api_key,
+            model=cfg.model,
+            temperature=0,
+            timeout=180,
+            max_retries=3,
+            max_tokens=8192,
+        )

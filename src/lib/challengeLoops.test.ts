@@ -36,6 +36,11 @@ describe("challenge loop routing", () => {
     expect(resolveChallengeLoopRoute("Deploy my Node app to Liara").mode).not.toBe(
       "conversation",
     );
+    // Short situational questions also look "conversational" at the router —
+    // the shell must continue an active/prior agent run instead of the welcome script.
+    expect(resolveChallengeLoopRoute("بخاطر شبکه خصوصی نیست؟")).toEqual({
+      mode: "conversation",
+    });
   });
 
   it("routes deploy and domain through GenUI intake (HITL later)", () => {

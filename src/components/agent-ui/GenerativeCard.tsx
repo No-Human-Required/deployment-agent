@@ -114,7 +114,8 @@ const cardCopy = {
     intakeService: "Service",
     intakePlan: "Plan",
     intakePlatform: "Platform",
-    intakeDomain: "Domain name",
+    intakeDomain: "Custom domain (optional)",
+    intakeDomainHint: "Leave empty to use the default liara.run URL after deploy.",
     intakeNewService: "New service",
     intakeNewServiceName: "New service name",
     intakeExistingService: "Existing service",
@@ -157,7 +158,8 @@ const cardCopy = {
     intakeService: "سرویس",
     intakePlan: "پلن",
     intakePlatform: "پلتفرم",
-    intakeDomain: "نام دامنه",
+    intakeDomain: "دامنه اختصاصی (اختیاری)",
+    intakeDomainHint: "خالی بگذارید تا بعد از استقرار از آدرس پیش‌فرض liara.run استفاده شود.",
     intakeNewService: "سرویس جدید",
     intakeNewServiceName: "نام سرویس جدید",
     intakeExistingService: "سرویس موجود",
@@ -462,9 +464,12 @@ function IntakeCard({
             </div>
           ) : null}
 
-          {data.require_domain ? (
+          {data.require_domain || data.kind === "deploy" ? (
             <div>
               <p className="text-[11px] uppercase tracking-wide text-slate-500">{strings.intakeDomain}</p>
+              {!data.require_domain && strings.intakeDomainHint ? (
+                <p className="mt-0.5 text-[11px] text-slate-500">{strings.intakeDomainHint}</p>
+              ) : null}
               <input
                 className="intake-input mt-1.5"
                 value={domainName}
@@ -491,7 +496,7 @@ function IntakeCard({
                   project_name: projectName,
                   ...(data.require_plan && planId ? { plan_id: planId } : {}),
                   ...(data.require_platform && platformId ? { platform: platformId } : {}),
-                  ...(data.require_domain && domainName.trim()
+                  ...((data.require_domain || data.kind === "deploy") && domainName.trim()
                     ? { domain_name: domainName.trim() }
                     : {}),
                 });

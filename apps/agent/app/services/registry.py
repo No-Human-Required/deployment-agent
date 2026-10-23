@@ -266,3 +266,43 @@ class CapabilityRegistry:
         cap.status = new_status
         self._session.flush()
         return cap
+
+
+# Live DevOps UX: when LIARA_ALLOW_LIVE_WRITES=1, promote DB/disk create so
+# fullstack deploy plans can provision prerequisites (not app-only).
+LIVE_DEVOPS_CREATE_TOOLS = ("create_database", "create_disk")
+
+
+def ensure_live_devops_tools_enabled(registry: CapabilityRegistry) -> list[str]:
+    """Promote create_database / create_disk → enabled when live writes are allowed.
+
+    Transition chain: disabled → documented → tested → enabled.
+    No-op when live writes are off or tools are permanently disabled.
+    """
+    from app.services.deploy import live_writes_allowed
+
+    if not live_writes_allowed():
+        return []
+
+    registry.seed()
+    updated: list[str] = []
+    for tool_id in LIVE_DEVOPS_CREATE_TOOLS:
+        try:
+            cap = registry.get(tool_id)
+        except CapabilityNotFound:
+            continue
+        if cap.permanently_disabled:
+            continue
+        try:
+            if cap.status == "disabled":
+                registry.set_status(tool_id, "documented")
+                cap = registry.get(tool_id)
+            if cap.status == "documented":
+                registry.set_status(tool_id, "tested")
+                cap = registry.get(tool_id)
+            if cap.status == "tested":
+                registry.set_status(tool_id, "enabled")
+                updated.append(tool_id)
+        except InvalidCapabilityTransition:
+            continue
+    return updated

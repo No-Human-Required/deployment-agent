@@ -52,9 +52,29 @@ class NodeNextReadiness:
 
 
 def assess_node_next(app_root: str | Path) -> NodeNextReadiness:
-    """Assess a local Node/Next app directory for first-publish readiness."""
-    root = Path(app_root).resolve()
+    """Assess a local Node/Next app directory for first-publish readiness.
+
+    Monorepo roots without ``scripts.start`` resolve to a runnable package
+    (e.g. ``apps/api``) before inspection.
+    """
+    from app.services.deploy_root import resolve_deploy_app_root
+
+    requested = Path(app_root).resolve()
+    root = resolve_deploy_app_root(requested)
     findings: list[ReadinessFinding] = []
+    if root != requested:
+        try:
+            rel = str(root.relative_to(requested))
+        except ValueError:
+            rel = str(root)
+        findings.append(
+            ReadinessFinding(
+                code="monorepo_app_root",
+                message=f"Deploy root resolved to {rel}",
+                evidence_paths=(str(root / "package.json"),),
+                severity="info",
+            )
+        )
 
     pkg_path = root / "package.json"
     if not pkg_path.is_file():

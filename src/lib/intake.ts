@@ -140,9 +140,11 @@ export function buildPlanPayloads(selection: IntakeSelection): {
       ...(planId ? { plan_id: planId } : {}),
       ...(platform ? { platform } : {}),
       ...(appPath ? { app_path: appPath } : {}),
+      ...(domain ? { domain_name: domain } : {}),
     };
     // Dependency discovery runs server-side inside deploy drafting (do not pass
     // `deps` here — that would replace the deploy plan with a deps-only plan).
+    // Custom domain is recorded for post-verify attach (same HITL domain flow).
     return { deploy };
   }
 
@@ -175,7 +177,7 @@ export function intakeAssistantPrompt(kind: IntakeKind, language: Locale): strin
   if (language === "fa") {
     switch (kind) {
       case "deploy":
-        return "می‌توانید سرویس جدید بسازید یا یکی از موجودها را انتخاب کنید؛ پلتفرم از روی پروژه پیشنهاد می‌شود و پلن را هم مشخص کنید. پس از تأیید شما طرح نوشته می‌شود — هنوز اجرایی نیست.";
+        return "مثل یک DevOps واقعی عمل می‌کنم: سرویس/پلتفرم/پلن را مشخص کنید. اگر پروژه دیتابیس یا دیسک لازم داشته باشد در همین طرح ساخته می‌شود. دامنه سفارشی اختیاری است (پیش‌فرض liara.run). بعد از تأیید شما اجرا می‌شود.";
       case "ops_resize":
         return "سرویس و پلن جدید را انتخاب کنید. تغییر پلن فقط بعد از تأیید شما اجرا می‌شود.";
       case "domain":
@@ -188,7 +190,7 @@ export function intakeAssistantPrompt(kind: IntakeKind, language: Locale): strin
   }
   switch (kind) {
     case "deploy":
-      return "Create a new Liara service or pick an existing one; platform is suggested from your project and you can change it. Then choose a plan — I’ll draft next; nothing runs until Approve.";
+      return "I'll act like real DevOps: pick service/platform/plan. If the app needs a database or disk, those are provisioned in the same plan. Custom domain is optional (default liara.run). Nothing runs until you Approve.";
     case "ops_resize":
       return "Pick the service and the new plan. Resize only runs after you Approve.";
     case "domain":

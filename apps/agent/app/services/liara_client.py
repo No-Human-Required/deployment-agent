@@ -23,8 +23,10 @@ Verified paths (developers.liara.ir OpenAPI):
 
 from __future__ import annotations
 
+import json
 import logging
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -101,6 +103,8 @@ class ProveReadResult:
 
 
 class LiaraClient:
+    RELEASE_EXTRA_FIELDS = frozenset({"build", "platformConfig", "healthCheck", "args", "cron"})
+
     def __init__(
         self,
         token: str,
@@ -273,6 +277,58 @@ class LiaraClient:
                 return [e for e in logs if isinstance(e, dict)]
         raise LiaraHttpError("Unexpected GET logs response shape")
 
+    def get_runtime_logs(
+        self, name: str, *, since: int | None = None
+    ) -> list[dict[str, Any]]:
+        """GET /v2/projects/{name}/logs — runtime stdout/stderr, oldest first.
+
+        v1 logs is deprecated (returns only an "upgrade your client" line). v2 returns
+        ``{"data": [{"metaData": {"releaseId"}, "values": [[ns_ts, json_line], ...]}]}``
+        newest first, where ``json_line`` is ``{"type": "stdout|stderr", "_entry": str}``.
+        """
+        params = {"start": str(int(since))} if since is not None else None
+        response = self.request("GET", f"/v2/projects/{name}/logs", params=params)
+        data = response.json()
+        streams = data.get("data") if isinstance(data, dict) else data
+        if not isinstance(streams, list):
+            raise LiaraHttpError("Unexpected GET v2 logs response shape")
+        lines: list[dict[str, Any]] = []
+        for stream in streams:
+            if not isinstance(stream, dict):
+                continue
+            meta = stream.get("metaData") if isinstance(stream.get("metaData"), dict) else {}
+            for row in stream.get("values") or []:
+                if not isinstance(row, list) or len(row) < 2:
+                    continue
+                entry: dict[str, Any] = {"ts": str(row[0]), "release_id": meta.get("releaseId")}
+                try:
+                    parsed = json.loads(row[1])
+                    entry["stream"] = parsed.get("type")
+                    entry["message"] = parsed.get("_entry") or ""
+                except (ValueError, TypeError, AttributeError):
+                    entry["stream"] = "stdout"
+                    entry["message"] = str(row[1])
+                lines.append(entry)
+        lines.sort(key=lambda e: int(e["ts"]) if str(e["ts"]).isdigit() else 0)
+        return lines
+
+    def get_build_logs(self, release_id: str) -> dict[str, Any]:
+        """GET /v2/releases/{id}/build-logs — ``{release: {state}, buildOutput: [{line, stream}]}``."""
+        response = self.request("GET", f"/v2/releases/{release_id}/build-logs")
+        data = response.json()
+        if not isinstance(data, dict):
+            raise LiaraHttpError("Unexpected build-logs response shape")
+        release = data.get("release") if isinstance(data.get("release"), dict) else {}
+        output = data.get("buildOutput") if isinstance(data.get("buildOutput"), list) else []
+        return {
+            "state": release.get("state"),
+            "lines": [
+                {"stream": row.get("stream"), "line": row.get("line") or ""}
+                for row in output
+                if isinstance(row, dict)
+            ],
+        }
+
     def get_events(self, name: str) -> list[dict[str, Any]]:
         """GET /v1/projects/{name}/events — app lifecycle events."""
         response = self.request("GET", f"/v1/projects/{name}/events")
@@ -285,9 +341,23 @@ class LiaraClient:
                 return [e for e in events if isinstance(e, dict)]
         raise LiaraHttpError("Unexpected GET events response shape")
 
-    def get_cpu_metrics(self, name: str) -> dict[str, Any] | list[Any] | None:
-        """GET /v1/projects/{name}/metrics/cpu — may be missing; callers record gaps."""
-        response = self.request("GET", f"/v1/projects/{name}/metrics/cpu")
+    def get_cpu_metrics(
+        self,
+        name: str,
+        *,
+        since: int | None = None,
+    ) -> dict[str, Any] | list[Any] | None:
+        """GET /v1/projects/{name}/metrics/cpu — ``since`` is a Unix timestamp (required by Liara).
+
+        When omitted, defaults to one hour ago. Live API rejects missing/non-numeric ``since``
+        and windows older than 7 days.
+        """
+        since_ts = int(since) if since is not None else int(time.time()) - 3600
+        response = self.request(
+            "GET",
+            f"/v1/projects/{name}/metrics/cpu",
+            params={"since": since_ts},
+        )
         if not response.content:
             return None
         data = response.json()
@@ -295,15 +365,33 @@ class LiaraClient:
             return data
         return None
 
-    def get_memory_metrics(self, name: str) -> dict[str, Any] | list[Any] | None:
-        """GET /v1/projects/{name}/metrics/memory — may be missing; callers record gaps."""
-        response = self.request("GET", f"/v1/projects/{name}/metrics/memory")
+    def get_memory_metrics(
+        self,
+        name: str,
+        *,
+        since: int | None = None,
+    ) -> dict[str, Any] | list[Any] | None:
+        """GET /v1/projects/{name}/metrics/memory — ``since`` Unix timestamp (required by Liara)."""
+        since_ts = int(since) if since is not None else int(time.time()) - 3600
+        response = self.request(
+            "GET",
+            f"/v1/projects/{name}/metrics/memory",
+            params={"since": since_ts},
+        )
         if not response.content:
             return None
         data = response.json()
         if isinstance(data, (dict, list)):
             return data
         return None
+
+    def get_metrics_summary(self, name: str) -> dict[str, Any] | None:
+        """GET /v1/projects/{name}/metrics/summary — latest CPU/memory snapshots (no since)."""
+        response = self.request("GET", f"/v1/projects/{name}/metrics/summary")
+        if not response.content:
+            return None
+        data = response.json()
+        return data if isinstance(data, dict) else None
 
     def list_networks(self) -> list[dict[str, Any]]:
         """GET /v1/networks — private networks required for create-app."""
@@ -442,13 +530,23 @@ class LiaraClient:
         source_id: str,
         port: int,
         platform: str,
+        disks: list[dict[str, Any]] | None = None,
+        extra: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """POST /v2/projects/{name}/releases — sourceID + port + type → releaseID."""
-        body = {
+        """POST /v2/projects/{name}/releases — sourceID + port + type → releaseID.
+
+        ``extra`` carries the liara.json-derived fields liara-cli sends (build, platformConfig, healthCheck, args, cron).
+        """
+        body: dict[str, Any] = {
             "sourceID": source_id,
             "port": port,
             "type": platform,
         }
+        if disks:
+            body["disks"] = disks
+        for key, value in (extra or {}).items():
+            if key in self.RELEASE_EXTRA_FIELDS and value is not None:
+                body[key] = value
         response = self.request(
             "POST",
             f"/v2/projects/{project_name}/releases",
@@ -646,15 +744,29 @@ class LiaraClient:
         version: str,
         public_network: bool = False,
         standalone_replica_set: bool | None = None,
+        network: str | None = None,
+        bundle_plan_id: str | None = None,
     ) -> dict[str, Any]:
-        """POST /v1/databases — returns databaseID. Live use requires registry enabled."""
+        """POST /v1/databases — returns databaseID. Live use requires registry enabled.
+
+        Live API requires ``network`` (private network id) and often ``bundlePlanID``.
+        Type must be ``postgres`` (not postgresql). Versions are precise (e.g. 16.14).
+        """
+        # Normalize common aliases from discovery kinds.
+        normalized_type = (
+            "postgres" if db_type in ("postgresql", "postgres") else db_type
+        )
         body: dict[str, Any] = {
             "hostname": hostname,
-            "type": db_type,
+            "type": normalized_type,
             "planID": plan_id,
             "version": version,
             "publicNetwork": public_network,
         }
+        if network:
+            body["network"] = network
+        if bundle_plan_id:
+            body["bundlePlanID"] = bundle_plan_id
         if standalone_replica_set is not None:
             body["options"] = {"standaloneReplicaSet": standalone_replica_set}
         response = self.request("POST", "/v1/databases", json=body)

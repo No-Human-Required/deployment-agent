@@ -258,11 +258,28 @@ class ConversationStore:
         )
 
         kept: list[ConversationThread] = []
+        incoming_ids: list[str] = []
+        pending_rows: list[tuple[str, dict[str, Any]]] = []
+        seen_ids: set[str] = set()
         for raw in conversations[:MAX_PER_FOLDER]:
-            cid = str(raw.get("id") or "").strip()
+            cid = str(raw.get("id") or "").strip()[:64]
             title = str(raw.get("title") or "").strip()
-            if not cid or not title:
+            if not cid or not title or cid in seen_ids:
                 continue
+            seen_ids.add(cid)
+            incoming_ids.append(cid)
+            pending_rows.append((cid, raw))
+
+        # ``id`` is the table PK (client-generated). A thread that moved folders
+        # would still collide after a folder-scoped delete — clear by id first.
+        if incoming_ids:
+            self._session.execute(
+                delete(ConversationThread).where(
+                    ConversationThread.id.in_(incoming_ids),
+                )
+            )
+
+        for cid, raw in pending_rows:
             messages = raw.get("messages")
             if not isinstance(messages, list):
                 messages = []
@@ -282,9 +299,10 @@ class ConversationStore:
                 )
             except ValueError:
                 updated_at = datetime.now(timezone.utc)
+            title = str(raw.get("title") or "").strip()
 
             row = ConversationThread(
-                id=cid[:64],
+                id=cid,
                 workspace_id=workspace.id,
                 folder_key=key,
                 title=title[:512],

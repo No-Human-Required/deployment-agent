@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Activity,
   ArrowUp,
@@ -70,36 +70,83 @@ type Props = {
   onStartDomainGoal: (projectName?: string) => void;
 };
 
-/** Last numeric-ish value from a Liara metrics series (list or `{ data|values|… }`). */
-function lastMetricSummary(series: unknown): string | null {
-  const formatPoint = (point: unknown): string | null => {
+/** Format a Liara metric sample for display (CPU fraction or memory bytes). */
+function formatMetricLatest(value: number, kind: "cpu" | "memory"): string {
+  if (kind === "cpu") {
+    // Liara CPU series is typically a core-fraction; show as percent when < 10.
+    if (value >= 0 && value <= 10) return `${(value * 100).toFixed(1)}%`;
+    return value.toFixed(3);
+  }
+  if (value >= 1024 * 1024 * 1024) return `${(value / (1024 * 1024 * 1024)).toFixed(2)} GiB`;
+  if (value >= 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MiB`;
+  if (value >= 1024) return `${(value / 1024).toFixed(0)} KiB`;
+  return `${Math.round(value)} B`;
+}
+
+/** Last numeric-ish value from a Liara metrics series (list or `{ result|data|values|… }`). */
+function lastMetricSummary(series: unknown): number | null {
+  const formatPoint = (point: unknown): number | null => {
     if (point == null) return null;
-    if (typeof point === "number" && Number.isFinite(point)) return String(point);
-    if (typeof point === "string" && point.trim()) return point.trim();
+    if (typeof point === "number" && Number.isFinite(point)) return point;
+    if (typeof point === "string" && point.trim()) {
+      const n = Number(point);
+      return Number.isFinite(n) ? n : null;
+    }
+    if (Array.isArray(point) && point.length >= 2) {
+      return formatPoint(point[1]);
+    }
     if (typeof point === "object" && !Array.isArray(point)) {
       const row = point as Record<string, unknown>;
       for (const key of ["v", "value", "cpu", "memory", "usage", "y"]) {
-        const val = row[key];
-        if (typeof val === "number" && Number.isFinite(val)) return String(val);
-        if (typeof val === "string" && val.trim()) return val.trim();
+        const val = formatPoint(row[key]);
+        if (val != null) return val;
       }
     }
     return null;
   };
   if (series == null) return null;
   if (Array.isArray(series) && series.length > 0) {
-    return formatPoint(series[series.length - 1]);
+    for (let i = series.length - 1; i >= 0; i -= 1) {
+      const found = formatPoint(series[i]);
+      if (found != null) return found;
+    }
+    return null;
   }
   if (typeof series === "object") {
     const obj = series as Record<string, unknown>;
+    const result = obj.result;
+    if (Array.isArray(result)) {
+      let best: number | null = null;
+      for (const row of result) {
+        if (!row || typeof row !== "object") continue;
+        const values = (row as Record<string, unknown>).values;
+        if (!Array.isArray(values) || values.length === 0) continue;
+        const found = formatPoint(values[values.length - 1]);
+        if (found != null) best = best == null ? found : Math.max(best, found);
+      }
+      if (best != null) return best;
+    }
     for (const key of ["data", "metrics", "values", "series", "points"]) {
       const nested = obj[key];
       if (Array.isArray(nested) && nested.length > 0) {
-        return formatPoint(nested[nested.length - 1]);
+        const found = formatPoint(nested[nested.length - 1]);
+        if (found != null) return found;
       }
     }
   }
   return null;
+}
+
+function metricDisplay(
+  block: { available: boolean; series?: unknown; latest?: number | null },
+  kind: "cpu" | "memory",
+): string | null {
+  if (!block.available) return null;
+  const latest =
+    typeof block.latest === "number" && Number.isFinite(block.latest)
+      ? block.latest
+      : lastMetricSummary(block.series);
+  return latest == null ? null : formatMetricLatest(latest, kind);
 }
 
 function statusBadgeClass(tone: ReturnType<typeof serviceStatusTone>): string {
@@ -217,7 +264,15 @@ const labels = {
     serviceMonitorEyebrow: "SERVICE",
     serviceMonitorCpu: "CPU",
     serviceMonitorMemory: "Memory",
+    serviceMonitorPlan: "Active plan",
+    serviceMonitorPlanCost: "Monthly plan cost",
+    serviceMonitorPlanUnknown: "Plan price unavailable",
+    serviceMonitorScale: "Scale",
+    serviceMonitorUrl: "Default URL",
+    serviceMonitorDomains: "Domains",
+    serviceMonitorNoDomains: "No custom domains attached",
     serviceMonitorLogs: "Recent logs",
+    serviceMonitorLogsEmpty: "No recent log lines",
     serviceMonitorGaps: "API gaps",
     serviceMonitorUnavailable: "Unavailable from Liara API",
     serviceMonitorLast: "Last value",
@@ -277,7 +332,15 @@ const labels = {
     serviceMonitorEyebrow: "سرویس",
     serviceMonitorCpu: "پردازنده",
     serviceMonitorMemory: "حافظه",
+    serviceMonitorPlan: "پلن فعال",
+    serviceMonitorPlanCost: "هزینه ماهانه پلن",
+    serviceMonitorPlanUnknown: "قیمت پلن نامشخص",
+    serviceMonitorScale: "مقیاس",
+    serviceMonitorUrl: "آدرس پیش‌فرض",
+    serviceMonitorDomains: "دامنه‌ها",
+    serviceMonitorNoDomains: "دامنهٔ سفارشی متصل نیست",
     serviceMonitorLogs: "لاگ‌های اخیر",
+    serviceMonitorLogsEmpty: "لاگ اخیری نیست",
     serviceMonitorGaps: "محدودیت‌های API",
     serviceMonitorUnavailable: "از API لیارا در دسترس نیست",
     serviceMonitorLast: "آخرین مقدار",
@@ -308,6 +371,28 @@ const labels = {
     investigate: "بررسی",
   },
 };
+
+function formatPlanTomans(value: number | null | undefined, language: Language): string {
+  if (value == null || Number.isNaN(value)) {
+    return language === "fa" ? "قیمت نامشخص" : "Price n/a";
+  }
+  const rounded = Math.round(value);
+  const formatted = new Intl.NumberFormat(language === "fa" ? "fa-IR" : "en-US").format(rounded);
+  return language === "fa" ? `${formatted} تومان / ماه` : `${formatted} Tomans/mo`;
+}
+
+function formatLogTimestamp(raw: string | null | undefined, language: Language): string {
+  if (!raw) return "";
+  const parsed = Date.parse(raw);
+  if (Number.isNaN(parsed)) return raw;
+  return new Date(parsed).toLocaleString(language === "fa" ? "fa-IR" : "en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
 
 function StateCard({
   title,
@@ -368,6 +453,8 @@ export function NavigationView({
   const tokenConfigured = Boolean(settingsView?.liara.token_configured);
   const workspaceId = settingsView?.workspace_id;
   const selectedProject = selectedServiceId?.trim() || "";
+  const selectedCatalogService = services.find((s) => s.id === selectedProject);
+  const selectedKind = selectedCatalogService?.kind === "database" ? "database" : "app";
 
   const [plans, setPlans] = useState<LiaraPlan[]>([]);
   const [plansState, setPlansState] = useState<LoadState>("idle");
@@ -380,6 +467,7 @@ export function NavigationView({
   const [serviceMonitoring, setServiceMonitoring] = useState<LiaraProjectMonitoring | null>(null);
   const [serviceMonitoringState, setServiceMonitoringState] = useState<LoadState>("idle");
   const [serviceMonitoringError, setServiceMonitoringError] = useState("");
+  const serviceMonitoringRequestRef = useRef(0);
 
   const [audit, setAudit] = useState<MaintainAuditEvent[]>([]);
   const [auditState, setAuditState] = useState<LoadState>("idle");
@@ -430,8 +518,13 @@ export function NavigationView({
     }
   }
 
-  async function loadServiceMonitoring(projectName: string) {
+  async function loadServiceMonitoring(
+    projectName: string,
+    kind: "app" | "database" = "app",
+  ) {
+    const requestId = ++serviceMonitoringRequestRef.current;
     if (!tokenConfigured) {
+      if (requestId !== serviceMonitoringRequestRef.current) return;
       setServiceMonitoring(null);
       setServiceMonitoringState("ready");
       setServiceMonitoringError("");
@@ -439,6 +532,7 @@ export function NavigationView({
     }
     const name = projectName.trim();
     if (!name) {
+      if (requestId !== serviceMonitoringRequestRef.current) return;
       setServiceMonitoring(null);
       setServiceMonitoringState("idle");
       setServiceMonitoringError("");
@@ -447,10 +541,12 @@ export function NavigationView({
     setServiceMonitoringState("loading");
     setServiceMonitoringError("");
     try {
-      const feed = await getProjectMonitoring(name, workspaceId);
+      const feed = await getProjectMonitoring(name, workspaceId, kind);
+      if (requestId !== serviceMonitoringRequestRef.current) return;
       setServiceMonitoring(feed);
       setServiceMonitoringState("ready");
     } catch (cause) {
+      if (requestId !== serviceMonitoringRequestRef.current) return;
       setServiceMonitoring(null);
       setServiceMonitoringState("error");
       setServiceMonitoringError(
@@ -508,7 +604,7 @@ export function NavigationView({
   useEffect(() => {
     if (activeNav !== "Monitoring") return;
     if (selectedProject) {
-      void loadServiceMonitoring(selectedProject);
+      void loadServiceMonitoring(selectedProject, selectedKind);
       return;
     }
     setServiceMonitoring(null);
@@ -516,7 +612,7 @@ export function NavigationView({
     setServiceMonitoringError("");
     void loadIncidents();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- selection drives monitoring vs incidents
-  }, [activeNav, selectedProject, workspaceId, tokenConfigured]);
+  }, [activeNav, selectedProject, selectedKind, workspaceId, tokenConfigured]);
 
   useEffect(() => {
     if (activeNav !== "Domains") return;
@@ -721,7 +817,7 @@ export function NavigationView({
           title={serviceMonitoringError || t.serviceMonitorError}
           body=""
           actionLabel={t.retry}
-          onAction={() => void loadServiceMonitoring(selectedProject)}
+          onAction={() => void loadServiceMonitoring(selectedProject, selectedKind)}
         />
       );
     }
@@ -733,7 +829,7 @@ export function NavigationView({
           title={t.serviceMonitorError}
           body=""
           actionLabel={t.retry}
-          onAction={() => void loadServiceMonitoring(selectedProject)}
+          onAction={() => void loadServiceMonitoring(selectedProject, selectedKind)}
         />
       );
     }
@@ -751,16 +847,30 @@ export function NavigationView({
       status: statusText,
       url: "",
       uptime: "—",
+      kind: project.kind === "database" ? "database" : "app",
     };
-    const cpuSummary = feed.cpu.available ? lastMetricSummary(feed.cpu.series) : null;
-    const memorySummary = feed.memory.available
-      ? lastMetricSummary(feed.memory.series)
-      : null;
+    const cpuSummary = metricDisplay(feed.cpu, "cpu");
+    const memorySummary = metricDisplay(feed.memory, "memory");
+    const plan = feed.plan ?? null;
+    const planLabel = plan?.label || project.plan_id || null;
+    const domains = feed.domains ?? [];
+    const logsGap = feed.gaps.find((gap) => gap.source === "logs");
+    const logsEmpty = logsGap?.reason === "empty" || logsGap?.reason === "empty_after_sanitize";
     const metaParts = [
+      project.kind === "database" ? (language === "fa" ? "دیتابیس" : "Database") : null,
       project.type,
-      project.plan_id,
+      planLabel,
+      project.scale != null ? `${t.serviceMonitorScale} ×${project.scale}` : null,
+      project.version ? `v${project.version}` : null,
+      project.volume_size_gb != null ? `${project.volume_size_gb} GB` : null,
       project.region,
     ].filter((part): part is string => Boolean(part && String(part).trim()));
+    const planCostText =
+      plan?.price_monthly != null
+        ? formatPlanTomans(plan.price_monthly, language)
+        : planLabel
+          ? t.serviceMonitorPlanUnknown
+          : t.serviceMonitorUnavailable;
 
     return (
       <div className="nav-stack">
@@ -793,7 +903,7 @@ export function NavigationView({
           </div>
         </Card>
 
-        <div className="monitoring-grid">
+        <div className="monitoring-grid monitoring-grid-4">
           <Card className="nav-detail-card monitor-card">
             <Activity size={14} />
             <span>{t.serviceMonitorCpu}</span>
@@ -828,7 +938,96 @@ export function NavigationView({
               </>
             )}
           </Card>
+          <Card className="nav-detail-card monitor-card">
+            <LayoutDashboard size={14} />
+            <span>{t.serviceMonitorPlan}</span>
+            {planLabel ? (
+              <>
+                <strong className="monitor-plan-label">{planLabel}</strong>
+                <small>
+                  {plan?.hint ? `${plan.hint} · ` : ""}
+                  {t.serviceMonitorPlanCost}: {planCostText}
+                </small>
+              </>
+            ) : (
+              <>
+                <strong className="monitor-unavailable">—</strong>
+                <small>{t.serviceMonitorUnavailable}</small>
+              </>
+            )}
+          </Card>
+          <Card className="nav-detail-card monitor-card">
+            <Globe2 size={14} />
+            <span>{t.serviceMonitorDomains}</span>
+            {project.default_url ? (
+              <>
+                <strong className="monitor-url-label">
+                  <a href={project.default_url} target="_blank" rel="noreferrer">
+                    {project.default_url.replace(/^https?:\/\//, "")}
+                  </a>
+                </strong>
+                <small>
+                  {domains.length > 0
+                    ? `${domains.length} ${t.serviceMonitorDomains.toLowerCase()}`
+                    : t.serviceMonitorNoDomains}
+                </small>
+              </>
+            ) : domains.length > 0 ? (
+              <>
+                <strong>{domains.length}</strong>
+                <small>{t.serviceMonitorDomains}</small>
+              </>
+            ) : (
+              <>
+                <strong className="monitor-unavailable">—</strong>
+                <small>
+                  {project.kind === "database"
+                    ? t.serviceMonitorUnavailable
+                    : t.serviceMonitorNoDomains}
+                </small>
+              </>
+            )}
+          </Card>
         </div>
+
+        {project.kind !== "database" || domains.length > 0 ? (
+          <Card className="nav-detail-card">
+            <div className="section-eyebrow">{t.serviceMonitorDomains}</div>
+            {project.default_url ? (
+              <p className="service-monitor-url-row">
+                <span className="nav-inline-muted">{t.serviceMonitorUrl}</span>
+                <a href={project.default_url} target="_blank" rel="noreferrer">
+                  {project.default_url}
+                </a>
+              </p>
+            ) : null}
+            {domains.length > 0 ? (
+              <ul className="service-monitor-domains" aria-label={t.serviceMonitorDomains}>
+                {domains.map((domain) => (
+                  <li key={domain.id} className="domain-row">
+                    <Globe2 size={14} />
+                    <div className="min-w-0 flex-1">
+                      <strong>{domain.name}</strong>
+                      <span className="nav-inline-muted">
+                        {[
+                          domain.status,
+                          domain.certificates_status
+                            ? `${t.domainsSsl}: ${domain.certificates_status}`
+                            : null,
+                          domain.type,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </span>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            ) : project.kind !== "database" ? (
+              <p className="nav-inline-muted">{t.serviceMonitorNoDomains}</p>
+            ) : null}
+          </Card>
+        ) : null}
 
         <Card className="nav-detail-card">
           <div className="section-eyebrow">{t.serviceMonitorLogs}</div>
@@ -838,18 +1037,28 @@ export function NavigationView({
                 <p className="nav-inline-muted mb-2">{t.serviceMonitorTruncated}</p>
               ) : null}
               <ul className="service-monitor-logs" aria-label={t.serviceMonitorLogs}>
-                {feed.logs.lines.map((line, index) => (
-                  <li key={`${line.timestamp ?? "log"}-${index}`}>
-                    {line.timestamp ? (
-                      <time dateTime={line.timestamp}>{line.timestamp}</time>
-                    ) : null}
-                    <code>{line.message}</code>
-                  </li>
-                ))}
+                {feed.logs.lines.map((line, index) => {
+                  const displayTime = formatLogTimestamp(line.timestamp, language);
+                  return (
+                    <li key={`${line.timestamp ?? "log"}-${index}`}>
+                      <div className="service-monitor-log-meta">
+                        {line.timestamp ? (
+                          <time dateTime={line.timestamp}>{displayTime}</time>
+                        ) : null}
+                        {line.stream ? (
+                          <span className="service-monitor-log-stream">{line.stream}</span>
+                        ) : null}
+                      </div>
+                      <code>{line.message}</code>
+                    </li>
+                  );
+                })}
               </ul>
             </>
           ) : (
-            <p className="nav-inline-muted">{t.serviceMonitorUnavailable}</p>
+            <p className="nav-inline-muted">
+              {logsEmpty ? t.serviceMonitorLogsEmpty : t.serviceMonitorUnavailable}
+            </p>
           )}
         </Card>
 
@@ -1144,7 +1353,7 @@ export function NavigationView({
       return;
     }
     if (activeNav === "Monitoring") {
-      if (selectedProject) void loadServiceMonitoring(selectedProject);
+      if (selectedProject) void loadServiceMonitoring(selectedProject, selectedKind);
       else void loadIncidents();
       return;
     }

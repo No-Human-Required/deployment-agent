@@ -11,7 +11,9 @@ from typing import Any, Protocol
 
 from app.services.liara_client import LiaraClient, LiaraClientError
 
-# Registry-aligned allowlist (deploy + ops + phase-4 deps). update_envs intentionally excluded.
+# Registry-aligned allowlist (deploy + ops + phase-4 deps).
+# update_envs is allowlisted for post-DB wire from dependency executor only;
+# execute_ops_steps still blocks user-facing env plans while L-D03 is unproven.
 DEPLOY_WRITE_TOOLS = frozenset({"create_project", "sources", "releases"})
 OPS_WRITE_TOOLS = frozenset(
     {
@@ -24,7 +26,9 @@ OPS_WRITE_TOOLS = frozenset(
     }
 )
 DEP_WRITE_TOOLS = frozenset({"create_database", "create_disk"})
-ALLOWLISTED_WRITE_TOOLS = DEPLOY_WRITE_TOOLS | OPS_WRITE_TOOLS | DEP_WRITE_TOOLS
+ALLOWLISTED_WRITE_TOOLS = (
+    DEPLOY_WRITE_TOOLS | OPS_WRITE_TOOLS | DEP_WRITE_TOOLS | frozenset({"update_envs"})
+)
 
 
 class ProviderWrite(Protocol):
@@ -82,11 +86,14 @@ class LiaraProviderWrite:
                 archive_path=str(payload["archive_path"]),
             )
         if tool_id == "releases":
+            disks = payload.get("disks")
             return self._client.create_release(
                 project_name=str(payload["project_name"]),
                 source_id=str(payload.get("sourceID") or payload.get("source_id")),
                 port=int(payload["port"]),
                 platform=str(payload.get("type") or payload.get("platform") or "node"),
+                disks=list(disks) if isinstance(disks, list) else None,
+                extra={k: payload[k] for k in ("build", "platformConfig", "healthCheck", "args", "cron") if k in payload},
             )
         if tool_id == "restart":
             return self._client.restart_project(str(payload["project_name"]))
@@ -128,12 +135,33 @@ class LiaraProviderWrite:
                     if payload.get("standaloneReplicaSet") is not None
                     else None
                 ),
+                network=(
+                    str(payload["network"])
+                    if payload.get("network") is not None
+                    else None
+                ),
+                bundle_plan_id=(
+                    str(
+                        payload.get("bundlePlanID")
+                        or payload.get("bundle_plan_id")
+                    )
+                    if (
+                        payload.get("bundlePlanID") is not None
+                        or payload.get("bundle_plan_id") is not None
+                    )
+                    else None
+                ),
             )
         if tool_id == "create_disk":
             return self._client.create_disk(
                 project_name=str(payload["project_name"]),
                 name=str(payload["name"]),
                 size=str(payload["size"]),
+            )
+        if tool_id == "update_envs":
+            return self._client.update_envs(
+                project=str(payload.get("project") or payload.get("project_name")),
+                variables=list(payload.get("variables") or []),
             )
         raise WriteNotAllowlisted(tool_id)
 

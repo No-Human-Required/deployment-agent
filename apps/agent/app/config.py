@@ -10,6 +10,7 @@ from pathlib import Path
 DEFAULT_LIARA_API_BASE_URL = "https://api.liara.ir"
 DEFAULT_DNS_API_BASE_URL = "https://dns-service.liara.ir"
 DEFAULT_WEB_ORIGIN = "http://localhost:5173"
+DEFAULT_LLM_MODEL = "deepseek-v4.1-flash"
 
 
 def _load_dotenv_files() -> None:
@@ -70,7 +71,7 @@ class Settings:
             liara_api_token=os.environ.get("LIARA_API_TOKEN") or None,
             llm_base_url=os.environ.get("LLM_BASE_URL") or None,
             llm_api_key=os.environ.get("LLM_API_KEY") or None,
-            llm_model=os.environ.get("LLM_MODEL") or None,
+            llm_model=os.environ.get("LLM_MODEL") or DEFAULT_LLM_MODEL,
             web_origin=os.environ.get("WEB_ORIGIN") or DEFAULT_WEB_ORIGIN,
             liara_http_timeout_seconds=float(
                 os.environ.get("LIARA_HTTP_TIMEOUT_SECONDS", "30")

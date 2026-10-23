@@ -57,6 +57,8 @@ _DEFAULT_TEST_DATABASE_URL = (
 def pytest_sessionstart(session: pytest.Session) -> None:
     """Fail fast if env points pytest at the live companion database."""
     _ = session
+    # Unit tests must not auto-enable live DevOps create tools from a developer .env.
+    os.environ.pop("LIARA_ALLOW_LIVE_WRITES", None)
     for key in ("TEST_DATABASE_URL", "PYTEST_DATABASE_URL"):
         raw = (os.environ.get(key) or "").strip()
         if raw:

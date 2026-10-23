@@ -24,6 +24,8 @@ const metricSchema = z.object({
 
 export const modeSchema = z.enum(["LIVE", "DEMO", "UNCONFIGURED"]);
 
+export const serviceKindSchema = z.enum(["app", "database"]);
+
 export const serviceSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -32,6 +34,7 @@ export const serviceSchema = z.object({
   status: z.string(),
   url: z.string(),
   uptime: z.string(),
+  kind: serviceKindSchema.default("app"),
 });
 
 /** Companion-aligned GenUI step row (plan card). */
@@ -444,7 +447,33 @@ export const liaraDomainsResultSchema = z.object({
   source: z.string().optional(),
 });
 
-/** Project row from `GET /api/liara/projects/{name}/monitoring` (sanitized Liara detail). */
+/** Catalog row from `GET /api/liara/services` (apps + databases). */
+export const liaraCatalogServiceSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  kind: serviceKindSchema,
+  type: z.string().nullable().optional(),
+  status: z.string().nullable().optional(),
+  isDeployed: z.boolean().nullable().optional(),
+  plan_id: z.string().nullable().optional(),
+  region: z.string().nullable().optional(),
+});
+
+export const liaraServicesResultSchema = z.object({
+  services: z.array(liaraCatalogServiceSchema),
+  source: z.string().optional(),
+  gaps: z
+    .array(
+      z.object({
+        source: z.string(),
+        reason: z.string(),
+        message: z.string(),
+      }),
+    )
+    .optional(),
+});
+
+/** Project/database row from monitoring BFF (sanitized Liara detail). */
 export const liaraMonitoringProjectSchema = z.object({
   name: z.string(),
   project_id: z.string(),
@@ -453,16 +482,24 @@ export const liaraMonitoringProjectSchema = z.object({
   isDeployed: z.boolean().nullable().optional(),
   plan_id: z.string().nullable().optional(),
   region: z.string().nullable().optional(),
+  scale: z.number().nullable().optional(),
+  version: z.string().nullable().optional(),
+  volume_size_gb: z.number().nullable().optional(),
+  public_network: z.boolean().nullable().optional(),
+  default_url: z.string().nullable().optional(),
+  kind: serviceKindSchema.optional(),
 });
 
 export const liaraMonitoringMetricsBlockSchema = z.object({
   available: z.boolean(),
   series: z.unknown().nullable().optional(),
+  latest: z.number().nullable().optional(),
 });
 
 export const liaraMonitoringLogLineSchema = z.object({
   message: z.string(),
   timestamp: z.string().nullable().optional(),
+  stream: z.string().nullable().optional(),
 });
 
 export const liaraMonitoringLogsBlockSchema = z.object({
@@ -477,17 +514,35 @@ export const liaraMonitoringGapSchema = z.object({
   message: z.string(),
 });
 
+/** Active plan enrichment from /v1/me (monthly price when known). */
+export const liaraMonitoringPlanSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  hint: z.string().nullable().optional(),
+  price_monthly: z.number().nullable().optional(),
+  ram_gb: z.number().nullable().optional(),
+});
+
 /** Combined monitoring feed — soft gaps keep HTTP 200 with partial data. */
 export const liaraProjectMonitoringSchema = z.object({
   project: liaraMonitoringProjectSchema,
+  plan: liaraMonitoringPlanSchema.nullable().optional(),
+  domains: z.array(liaraDomainSchema).optional(),
   cpu: liaraMonitoringMetricsBlockSchema,
   memory: liaraMonitoringMetricsBlockSchema,
   logs: liaraMonitoringLogsBlockSchema,
   gaps: z.array(liaraMonitoringGapSchema),
-  source: z.literal("liara_monitoring").or(z.string()),
+  source: z
+    .union([
+      z.literal("liara_monitoring"),
+      z.literal("liara_database_monitoring"),
+      z.string(),
+    ])
+    .optional(),
 });
 
 export type LiaraProjectMonitoring = z.infer<typeof liaraProjectMonitoringSchema>;
+export type LiaraMonitoringPlan = z.infer<typeof liaraMonitoringPlanSchema>;
 
 /** Maintain incident card from `GET /api/maintain/incidents`. */
 export const maintainIncidentSchema = z.object({

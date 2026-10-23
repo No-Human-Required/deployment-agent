@@ -42,6 +42,99 @@ OP_STATE_UNKNOWN = "unknown"
 
 DEP_WRITE_TOOLS = frozenset({"create_database", "create_disk"})
 
+# Valid web-push VAPID pair for first boot (not production secrets).
+# Placeholder strings like ``replace-with-…`` crash Nest at NotificationsService init.
+_BOOTSTRAP_VAPID_PUBLIC = (
+    "BJSbE6SGmtU-QI1OAmLMayp3Cg1oxr3PydvirJf2c171wwfphDO5lWsw_"
+    "lswiXMxq8HmJJnjRKaHvcwUNa2tX2M"
+)
+_BOOTSTRAP_VAPID_PRIVATE = "MFY2VUtl5xlV8MR8iY5CUTceCtqLrldsAr1YvvPbwPc"
+
+
+def _invalid_vapid_env(key: str, value: str) -> bool:
+    """True when a stored VAPID value would crash ``web-push`` at boot."""
+    raw = (value or "").strip()
+    if not raw:
+        return True
+    lowered = raw.lower()
+    if any(
+        marker in lowered
+        for marker in ("replace", "change-me", "example", "todo", "xxx")
+    ):
+        return True
+    # Uncompressed public key is ~87 chars; private ~43 (URL-safe base64).
+    if key == "VAPID_PUBLIC_KEY" and len(raw) < 80:
+        return True
+    if key == "VAPID_PRIVATE_KEY" and len(raw) < 40:
+        return True
+    return False
+
+
+_PLACEHOLDER_ENV_MARKERS = (
+    "replace",
+    "change-me",
+    "example.com",
+    "example@",
+    "todo",
+    "xxx",
+    "your-",
+    "placeholder",
+)
+
+# Never copy these from a local .env onto Liara (private DBaaS / platform owns them).
+_LOCAL_ENV_SKIP = frozenset(
+    {
+        "DATABASE_URL",
+        "PORT",
+        "NODE_ENV",
+        "STORAGE_PATH",
+    }
+)
+
+
+def _is_placeholder_env_value(value: str) -> bool:
+    raw = (value or "").strip()
+    if not raw:
+        return True
+    lowered = raw.lower()
+    return any(marker in lowered for marker in _PLACEHOLDER_ENV_MARKERS)
+
+
+def _load_local_dotenv_map(app_root: str | Path | None) -> dict[str, str]:
+    """Read non-secret-logged ``.env`` key/values from the deploy app (or parents)."""
+    if not app_root:
+        return {}
+    root = Path(app_root).expanduser().resolve()
+    candidates = [
+        root / ".env",
+        root.parent / ".env",
+        root.parent.parent / ".env",
+    ]
+    out: dict[str, str] = {}
+    for path in candidates:
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for line in text.splitlines():
+            raw = line.strip()
+            if not raw or raw.startswith("#") or "=" not in raw:
+                continue
+            key, _, val = raw.partition("=")
+            key = key.strip()
+            if not key or key in _LOCAL_ENV_SKIP:
+                continue
+            val = val.strip().strip("'").strip('"')
+            if _is_placeholder_env_value(val):
+                continue
+            out.setdefault(key, val)
+        if out:
+            break
+    return out
+
+
 # package.json dependency name → resource kind
 _PKG_SIGNALS: dict[str, str] = {
     "pg": "postgres",
@@ -68,14 +161,15 @@ _ENV_KEY_PATTERNS: list[tuple[re.Pattern[str], str]] = [
 
 _DISK_PKG = frozenset({"multer", "formidable", "busboy", "sharp", "fs-extra"})
 
-# Default Liara DBaaS versions when proposing create (docs-backed defaults).
+# Default Liara DBaaS versions / plan when proposing create (live catalog).
 _DEFAULT_VERSIONS: dict[str, str] = {
-    "postgres": "16",
+    "postgres": "16.14",
     "mysql": "8.0",
     "redis": "7.2",
     "mongodb": "7.0",
 }
-_DEFAULT_PLAN_ID = "small"
+# ir-small is listed but often returns g1_plan_unavailable; small-g2 works with bundle.
+_DEFAULT_PLAN_ID = "small-g2"
 
 
 def _utcnow_iso() -> str:
@@ -211,7 +305,11 @@ class DepResult:
 
 
 def discover_dependencies(app_root: str | Path) -> DependencyDiscovery:
-    """Heuristic scan of manifests / env examples — every finding is file-backed."""
+    """Heuristic scan of manifests / env examples — every finding is file-backed.
+
+    For monorepos, scans the workspace root plus preferred app packages
+    (``apps/api``, ``apps/web``, …) so DB signals in nested packages are found.
+    """
     root = Path(app_root).resolve()
     findings: list[DependencyFinding] = []
     seen: set[str] = set()
@@ -233,6 +331,46 @@ def discover_dependencies(app_root: str | Path) -> DependencyDiscovery:
             app_root=str(root),
         )
 
+    scan_roots = [root]
+    for rel in (
+        "apps/api",
+        "apps/server",
+        "apps/backend",
+        "apps/web",
+        "packages/api",
+        "api",
+        "server",
+    ):
+        candidate = root / rel
+        if candidate.is_dir() and (candidate / "package.json").is_file():
+            scan_roots.append(candidate)
+
+    # Dedup while preserving order
+    unique_roots: list[Path] = []
+    for path in scan_roots:
+        if path not in unique_roots:
+            unique_roots.append(path)
+
+    for scan_root in unique_roots:
+        _scan_package_and_env(scan_root, findings=findings, seen=seen)
+
+    required = tuple(
+        sorted({f.kind for f in findings if f.required and f.kind != "unknown"})
+    )
+    return DependencyDiscovery(
+        findings=tuple(findings),
+        required_kinds=required,
+        notes=f"scanned {', '.join(str(p) for p in unique_roots)}",
+        app_root=str(root),
+    )
+
+
+def _scan_package_and_env(
+    root: Path,
+    *,
+    findings: list[DependencyFinding],
+    seen: set[str],
+) -> None:
     pkg_path = root / "package.json"
     if pkg_path.is_file():
         try:
@@ -325,17 +463,6 @@ def discover_dependencies(app_root: str | Path) -> DependencyDiscovery:
                     )
                 )
 
-    required = tuple(sorted({f.kind for f in findings if f.required and f.kind != "unknown"}))
-    notes = None
-    if not findings:
-        notes = "no DB/Redis/disk signals in package manifests or env examples"
-    return DependencyDiscovery(
-        findings=tuple(findings),
-        required_kinds=required,
-        notes=notes,
-        app_root=str(root),
-    )
-
 
 def registry_create_enabled(registry: CapabilityRegistry, tool_id: str) -> bool:
     try:
@@ -399,18 +526,23 @@ def build_dependency_plan_view(
 
         # DBaaS kinds
         hostname = f"{hostname_prefix}-{kind}"[:32]
+        # Liara DBaaS types: postgres (not postgresql), mysql, redis, mongodb, …
+        db_type = "postgres" if kind == "postgres" else kind
+        db_params: dict[str, Any] = {
+            "hostname": hostname,
+            "type": db_type,
+            "planID": plan_id if plan_id not in ("small", "free") else _DEFAULT_PLAN_ID,
+            "version": _DEFAULT_VERSIONS.get(kind, "16"),
+            "publicNetwork": False,
+        }
+        if project_name:
+            db_params["project_name"] = project_name
         entry = {
             "kind": kind,
             "tool_id": "create_database",
             "action": "create_database",
             "enabled": db_enabled,
-            "params": {
-                "hostname": hostname,
-                "type": kind if kind != "postgres" else "postgresql",
-                "planID": plan_id,
-                "version": _DEFAULT_VERSIONS.get(kind, "16"),
-                "publicNetwork": False,
-            },
+            "params": db_params,
         }
         if not db_enabled:
             entry["disabled_reason"] = DEP_OPEN_NEED_CREATE
@@ -516,19 +648,43 @@ def build_deps_plan_body(
     }
 
 
+_DEFAULT_DB_NAME = {"postgresql": "postgres", "postgres": "postgres", "mongodb": "admin"}
+
+
 def connection_url_from_database(
     details: dict[str, Any],
     *,
     db_type: str,
+    db_name: str | None = None,
 ) -> str | None:
     """Build a connection URL from get_database payload — caller stores via SecretService."""
     database = details.get("database") if isinstance(details.get("database"), dict) else details
     node = database.get("node") if isinstance(database.get("node"), dict) else {}
-    host = node.get("host") or database.get("hostname")
-    port = node.get("port") or database.get("internalPort")
+    network = database.get("network") if isinstance(database.get("network"), dict) else {}
+    network_node = (
+        network.get("node") if isinstance(network.get("node"), dict) else {}
+    )
+    # Private DBaaS: hostname on the shared network; public host may be absent.
+    host = (
+        node.get("host")
+        or database.get("hostname")
+        or network_node.get("host")
+    )
+    port = node.get("port") or database.get("internalPort") or 5432
     user = database.get("username") or "root"
-    password = node.get("root_password") or database.get("password")
-    db_name = database.get("dbName") or database.get("hostname") or "db"
+    password = (
+        node.get("root_password")
+        or database.get("root_password")
+        or database.get("password")
+    )
+    # Liara DBaaS has no per-hostname database; the hostname is not a db name.
+    db_name = (
+        db_name
+        or database.get("dbName")
+        or _DEFAULT_DB_NAME.get(db_type)
+        or database.get("name")
+        or "db"
+    )
     if not host or password is None:
         return None
     port_s = f":{port}" if port else ""
@@ -655,12 +811,12 @@ def execute_dependency_steps(
         if tool_id not in DEP_WRITE_TOOLS:
             continue
         params = dict(step.params or {})
-        fingerprint = request_body_fingerprint(
-            {"tool_id": tool_id, "params": params, "step_id": step.id}
-        )
 
         enabled = registry_create_enabled(registry, tool_id)
         if not enabled:
+            fingerprint = request_body_fingerprint(
+                {"tool_id": tool_id, "params": params, "step_id": step.id}
+            )
             open_needs.append(DEP_OPEN_NEED_CREATE)
             open_needs.append(DEP_OPEN_NEED_REQUIRED)
             handoff = {
@@ -696,6 +852,9 @@ def execute_dependency_steps(
             write_guard._provider_write, LiaraProviderWrite  # noqa: SLF001
         ):
             # Noop guard without client cannot perform real/mocked HTTP creates.
+            fingerprint = request_body_fingerprint(
+                {"tool_id": tool_id, "params": params, "step_id": step.id}
+            )
             attempts.append(
                 DepAttempt(
                     step_id=step.id,
@@ -708,6 +867,56 @@ def execute_dependency_steps(
             open_needs.append(DEP_OPEN_NEED_REQUIRED)
             state = OP_STATE_DEPS_BLOCKED
             continue
+
+        # Live DBaaS create needs network id + bundlePlanID from the PaaS project.
+        if tool_id == "create_database" and effective_client is not None:
+            project_for_db = (
+                str(params.get("project_name") or "").strip()
+                or str(provider_ids.get("project_name") or "").strip()
+            )
+            if project_for_db:
+                try:
+                    project = effective_client.get_project(project_for_db)
+                    network = project.get("network")
+                    if isinstance(network, dict) and network.get("_id"):
+                        params.setdefault("network", str(network["_id"]))
+                    elif isinstance(network, str) and network.strip():
+                        params.setdefault("network", network.strip())
+                    bundle = project.get("bundlePlanID") or project.get(
+                        "bundle_plan_id"
+                    )
+                    if bundle:
+                        params.setdefault("bundlePlanID", str(bundle))
+                    # Prefer g2 plans when legacy ir-small is unavailable.
+                    plan_id_val = str(
+                        params.get("planID") or params.get("plan_id") or ""
+                    )
+                    if plan_id_val in ("ir-small", "small", "free", ""):
+                        params["planID"] = _DEFAULT_PLAN_ID
+                    if not params.get("version") or str(params.get("version")) in (
+                        "16",
+                        "17",
+                    ):
+                        kind_hint = str(params.get("type") or "postgres")
+                        kind_key = (
+                            "postgres"
+                            if kind_hint in ("postgres", "postgresql")
+                            else kind_hint
+                        )
+                        params["version"] = _DEFAULT_VERSIONS.get(
+                            kind_key, "16.14"
+                        )
+                    provider_ids.setdefault("project_name", project_for_db)
+                except LiaraClientError as exc:
+                    logger.warning(
+                        "could not enrich create_database from project %s: %s",
+                        project_for_db,
+                        exc.code,
+                    )
+
+        fingerprint = request_body_fingerprint(
+            {"tool_id": tool_id, "params": params, "step_id": step.id}
+        )
 
         try:
             result = write_guard.execute_allowlisted(tool_id=tool_id, payload=params)
@@ -749,18 +958,66 @@ def execute_dependency_steps(
             state = OP_STATE_UNKNOWN
             continue
         except LiaraClientError as exc:
-            attempts.append(
-                DepAttempt(
-                    step_id=step.id,
-                    tool_id=tool_id,
-                    fingerprint=fingerprint,
-                    status="failed",
-                    error=_redact_secrets_in_text(exc.message),
+            # 409 = already provisioned — treat as success for DevOps idempotency.
+            if exc.status_code == 409 and tool_id == "create_disk":
+                disk_name = params.get("name")
+                project_name = params.get("project_name")
+                provider_ids.setdefault("disks", []).append(
+                    {"name": disk_name, "project": project_name, "existed": True}
                 )
-            )
-            state = OP_STATE_DEPS_PARTIAL
-            open_needs.append(DEP_OPEN_NEED_INCOMPLETE)
-            continue
+                attempts.append(
+                    DepAttempt(
+                        step_id=step.id,
+                        tool_id=tool_id,
+                        fingerprint=fingerprint,
+                        status="exists",
+                        provider_ids={"disk": disk_name},
+                    )
+                )
+                continue
+            if exc.status_code == 409 and tool_id == "create_database":
+                hostname = str(params.get("hostname") or "")
+                attempts.append(
+                    DepAttempt(
+                        step_id=step.id,
+                        tool_id=tool_id,
+                        fingerprint=fingerprint,
+                        status="exists",
+                        provider_ids={"hostname": hostname},
+                    )
+                )
+                # Best-effort: resolve existing DB id for env wire below.
+                if effective_client is not None and hostname:
+                    try:
+                        for row in effective_client.list_databases():
+                            if str(row.get("hostname") or "") == hostname:
+                                result = {
+                                    "databaseID": row.get("_id")
+                                    or row.get("id")
+                                    or row.get("databaseID"),
+                                    "existed": True,
+                                }
+                                break
+                        else:
+                            result = {"existed": True}
+                    except LiaraClientError:
+                        result = {"existed": True}
+                else:
+                    result = {"existed": True}
+                # Fall through to secret/env wire using result.
+            else:
+                attempts.append(
+                    DepAttempt(
+                        step_id=step.id,
+                        tool_id=tool_id,
+                        fingerprint=fingerprint,
+                        status="failed",
+                        error=_redact_secrets_in_text(exc.message),
+                    )
+                )
+                state = OP_STATE_DEPS_PARTIAL
+                open_needs.append(DEP_OPEN_NEED_INCOMPLETE)
+                continue
 
         secret_ref: str | None = None
         if tool_id == "create_database":
@@ -794,6 +1051,137 @@ def execute_dependency_steps(
                             secret_ref,
                             hostname,
                         )
+                        # Wire DATABASE_URL onto the PaaS app (merge existing keys).
+                        project_for_env = (
+                            str(params.get("project_name") or "").strip()
+                            or str(provider_ids.get("project_name") or "").strip()
+                        )
+                        if (
+                            project_for_env
+                            and url
+                            and effective_client is not None
+                        ):
+                            try:
+                                existing = effective_client.project_envs(
+                                    project_for_env
+                                )
+                                by_key: dict[str, str] = {}
+                                for row in existing:
+                                    key = row.get("key") or row.get("name")
+                                    val = row.get("value")
+                                    if isinstance(key, str) and key.strip():
+                                        by_key[key.strip()] = (
+                                            str(val) if val is not None else ""
+                                        )
+                                by_key["DATABASE_URL"] = url
+                                # Prefer real values from the local project ``.env``
+                                # (DevOps UX: don't ship placeholder IMAP/SMTP when
+                                # the workspace already has working secrets).
+                                app_root_hint = (
+                                    params.get("app_path")
+                                    or provider_ids.get("app_path")
+                                    or (
+                                        (provider_ids.get("dependency_plan") or {}).get(
+                                            "discovery", {}
+                                        )
+                                        if isinstance(
+                                            provider_ids.get("dependency_plan"), dict
+                                        )
+                                        else {}
+                                    ).get("app_root")
+                                )
+                                # discovery may live on the dependency plan checkpoint
+                                if not app_root_hint and isinstance(
+                                    provider_ids.get("discovery"), dict
+                                ):
+                                    app_root_hint = provider_ids["discovery"].get(
+                                        "app_root"
+                                    )
+                                local_env = _load_local_dotenv_map(app_root_hint)
+                                for key, val in local_env.items():
+                                    if key in _LOCAL_ENV_SKIP:
+                                        continue
+                                    by_key[key] = val
+                                # Seed required Nest/mail boot keys so the app can
+                                # start; real IMAP/SMTP should be confirmed in UX.
+                                # VAPID must be cryptographically valid or web-push
+                                # crashes the Nest process at boot (crash-loop →
+                                # Liara edge still answers hello-world ``ok``).
+                                defaults = {
+                                    "APP_URL": f"https://{project_for_env}.liara.run",
+                                    "APP_USERNAME": "admin",
+                                    "APP_PASSWORD": "change-me",
+                                    "NODE_ENV": "production",
+                                    "PORT": "3000",
+                                    # Relative path + disk mountTo ``storage``.
+                                    "STORAGE_PATH": "./storage",
+                                    "IMAP_HOST": "imap.example.com",
+                                    "IMAP_PORT": "993",
+                                    "IMAP_USERNAME": "user@example.com",
+                                    "IMAP_PASSWORD": "change-me",
+                                    "IMAP_TLS": "true",
+                                    "SMTP_HOST": "smtp.example.com",
+                                    "SMTP_PORT": "587",
+                                    "SMTP_USERNAME": "user@example.com",
+                                    "SMTP_PASSWORD": "change-me",
+                                    "SMTP_TLS": "true",
+                                    "VAPID_PUBLIC_KEY": _BOOTSTRAP_VAPID_PUBLIC,
+                                    "VAPID_PRIVATE_KEY": _BOOTSTRAP_VAPID_PRIVATE,
+                                    "VAPID_SUBJECT": "mailto:admin@example.com",
+                                }
+                                for key, val in defaults.items():
+                                    existing_val = by_key.get(key)
+                                    if existing_val is None or existing_val == "":
+                                        by_key[key] = val
+                                    elif _is_placeholder_env_value(str(existing_val)):
+                                        by_key[key] = val
+                                    elif key in (
+                                        "VAPID_PUBLIC_KEY",
+                                        "VAPID_PRIVATE_KEY",
+                                    ) and _invalid_vapid_env(
+                                        key, str(existing_val)
+                                    ):
+                                        by_key[key] = val
+                                # Platform-owned paths always win over local ./storage
+                                # if the local file pointed elsewhere.
+                                by_key["STORAGE_PATH"] = "./storage"
+                                by_key["NODE_ENV"] = "production"
+                                by_key["PORT"] = by_key.get("PORT") or "3000"
+                                by_key["DATABASE_URL"] = url
+                                variables = [
+                                    {"key": k, "value": v}
+                                    for k, v in by_key.items()
+                                ]
+                                write_guard.execute_allowlisted(
+                                    tool_id="update_envs",
+                                    payload={
+                                        "project": project_for_env,
+                                        "variables": variables,
+                                    },
+                                )
+                                write_count += 1
+                                provider_ids["env_wired"] = sorted(by_key.keys())
+                                provider_ids["project_name"] = project_for_env
+                                provider_ids["env_from_local"] = sorted(local_env.keys())
+                                still_need = [
+                                    k
+                                    for k in (
+                                        "IMAP_PASSWORD",
+                                        "SMTP_PASSWORD",
+                                        "APP_PASSWORD",
+                                    )
+                                    if _is_placeholder_env_value(by_key.get(k, ""))
+                                ]
+                                provider_ids["env_needs_user_secrets"] = still_need
+                            except Exception as wire_exc:  # noqa: BLE001
+                                logger.warning(
+                                    "DATABASE_URL wire failed for %s: %s",
+                                    project_for_env,
+                                    type(wire_exc).__name__,
+                                )
+                                open_needs.append("env_wire_pending")
+                                if state == OP_STATE_DEPS_DONE:
+                                    state = OP_STATE_DEPS_PARTIAL
                     else:
                         pending.append(
                             {

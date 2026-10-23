@@ -9,7 +9,7 @@ import {
   liaraDomainsResultSchema,
   liaraPlansResultSchema,
   liaraProjectMonitoringSchema,
-  liaraProjectSummarySchema,
+  liaraServicesResultSchema,
   maintainAuditResultSchema,
   maintainIncidentsResultSchema,
   monitorStatusSchema,
@@ -38,6 +38,12 @@ import {
   type SettingsView,
 } from "./schemas";
 import { assessReadinessPayload } from "./quietChat";
+import {
+  agentEventSchema,
+  agentRunSnapshotSchema,
+  startAgentRunResultSchema,
+  type AgentEvent,
+} from "./agentRuns";
 import { sortPlansWeakToStrong } from "./sortPlans";
 
 export type Service = z.infer<typeof serviceSchema>;
@@ -86,25 +92,28 @@ async function request(path: string, init?: RequestInit): Promise<unknown> {
   return response.json();
 }
 
-function projectsToServices(projects: z.infer<typeof liaraProjectSummarySchema>[]): Service[] {
-  return projects
-    .map((project) => {
-      const id = project.project_id != null ? String(project.project_id) : "";
+function catalogToServices(
+  rows: z.infer<typeof liaraServicesResultSchema>["services"],
+): Service[] {
+  return rows
+    .map((row) => {
+      const id = row.id?.trim();
       if (!id) return null;
       const status =
-        project.status != null && String(project.status).length > 0
-          ? String(project.status)
-          : project.isDeployed
+        row.status != null && String(row.status).length > 0
+          ? String(row.status)
+          : row.isDeployed
             ? "deployed"
             : "unknown";
       return serviceSchema.parse({
         id,
-        name: id,
-        app_type: project.type != null ? String(project.type) : "unknown",
-        region: "—",
+        name: row.name?.trim() || id,
+        app_type: row.type != null ? String(row.type) : "unknown",
+        region: row.region != null && String(row.region).trim() ? String(row.region) : "—",
         status,
         url: "",
         uptime: "—",
+        kind: row.kind,
       });
     })
     .filter((row): row is Service => row !== null);
@@ -139,12 +148,12 @@ export async function getReady(): Promise<z.infer<typeof readySchema>> {
 }
 
 /**
- * Live services catalog from companion prove-read projects.
- * No dedicated projects-list BFF exists yet — prove-read is the read path.
+ * Live account catalog: PaaS apps + DBaaS databases (`GET /api/liara/services`).
  */
 export async function getServices(workspaceId?: string): Promise<Service[]> {
-  const prove = await proveLiaraRead(workspaceId);
-  return projectsToServices(prove.projects ?? []);
+  const query = workspaceId ? `?workspace_id=${encodeURIComponent(workspaceId)}` : "";
+  const raw = await request(`/api/liara/services${query}`);
+  return catalogToServices(liaraServicesResultSchema.parse(raw).services);
 }
 
 /** Account PaaS plan catalog (`GET /api/liara/plans`) — not deployment release history. */
@@ -189,19 +198,22 @@ export async function getDomains(
 }
 
 /**
- * Per-project monitoring feed (`GET /api/liara/projects/{name}/monitoring`).
- * Soft gaps for missing metrics/logs stay on HTTP 200; hard project errors throw.
+ * Per-resource monitoring feed (app or database).
+ * Soft gaps for missing metrics/logs stay on HTTP 200; hard errors throw.
  */
 export async function getProjectMonitoring(
   projectName: string,
   workspaceId?: string,
+  kind: "app" | "database" = "app",
 ): Promise<LiaraProjectMonitoring> {
   const name = projectName.trim();
   if (!name) throw new Error("project name is required");
   const query = workspaceId ? `?workspace_id=${encodeURIComponent(workspaceId)}` : "";
-  const raw = await request(
-    `/api/liara/projects/${encodeURIComponent(name)}/monitoring${query}`,
-  );
+  const path =
+    kind === "database"
+      ? `/api/liara/databases/${encodeURIComponent(name)}/monitoring${query}`
+      : `/api/liara/projects/${encodeURIComponent(name)}/monitoring${query}`;
+  const raw = await request(path);
   return liaraProjectMonitoringSchema.parse(raw);
 }
 
@@ -503,6 +515,93 @@ export async function createPlanFromFix(args: {
       }),
     }),
   );
+}
+
+// --- Autonomous DevOps agent (`/api/agent/runs`) -----------------------------
+
+/** Start an agent run (the user's one-time approval for this run). */
+export async function startAgentRun(args: {
+  workspaceId: string;
+  goal: string;
+  projectName?: string;
+  projectRoot?: string | null;
+  conversationId?: string;
+}) {
+  return startAgentRunResultSchema.parse(
+    await request("/api/agent/runs", {
+      method: "POST",
+      body: JSON.stringify({
+        workspace_id: args.workspaceId,
+        goal: args.goal,
+        ...(args.projectName ? { project_name: args.projectName } : {}),
+        ...(args.projectRoot ? { project_root: args.projectRoot } : {}),
+        ...(args.conversationId ? { conversation_id: args.conversationId } : {}),
+      }),
+    }),
+  );
+}
+
+export async function getAgentRun(runId: string) {
+  return agentRunSnapshotSchema.parse(await request(`/api/agent/runs/${encodeURIComponent(runId)}`));
+}
+
+/** Approve or decline a paused, gated action (paid resource / domain). */
+export async function resumeAgentRun(runId: string, approved: boolean, note?: string) {
+  return (await request(`/api/agent/runs/${encodeURIComponent(runId)}/resume`, {
+    method: "POST",
+    body: JSON.stringify({ approved, ...(note ? { note } : {}) }),
+  })) as { run_id: string; status: string };
+}
+
+/** Stop a run after its current step. */
+export async function cancelAgentRun(runId: string) {
+  return (await request(`/api/agent/runs/${encodeURIComponent(runId)}/cancel`, { method: "POST" })) as {
+    run_id: string;
+    status: string;
+  };
+}
+
+/** Mid-run chat follow-up — queued for the agent's next decision turn. */
+export async function steerAgentRun(runId: string, message: string) {
+  return (await request(`/api/agent/runs/${encodeURIComponent(runId)}/message`, {
+    method: "POST",
+    body: JSON.stringify({ message }),
+  })) as { run_id: string; status: string; message: string };
+}
+
+/**
+ * Subscribe to agent events (SSE). Returns an unsubscribe function.
+ * `onEnd` fires after the terminal `done` / `error` event; `onDrop` when the stream
+ * breaks first (server restart, network) so the caller can re-sync via `getAgentRun`.
+ */
+export function streamAgentRun(
+  runId: string,
+  after: number,
+  handlers: { onEvent: (event: AgentEvent) => void; onEnd?: () => void; onDrop?: () => void },
+): () => void {
+  const source = new EventSource(`/api/agent/runs/${encodeURIComponent(runId)}/events?after=${after}`);
+  let closed = false;
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    source.close();
+  };
+  source.onmessage = (message) => {
+    const parsed = agentEventSchema.safeParse(JSON.parse(message.data));
+    if (!parsed.success) return;
+    const event = parsed.data as AgentEvent;
+    handlers.onEvent(event);
+    if (event.type === "done" || event.type === "error") {
+      close();
+      handlers.onEnd?.();
+    }
+  };
+  source.onerror = () => {
+    if (closed) return;
+    close();
+    handlers.onDrop?.();
+  };
+  return close;
 }
 
 /**

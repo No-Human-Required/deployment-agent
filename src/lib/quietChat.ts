@@ -65,12 +65,22 @@ function verificationDetail(
         bits.push("انتشار در لیارا تأیید نشد");
       }
       if (verification?.http_ok === false) {
-        const status = verification.http_status;
-        bits.push(
-          typeof status === "number"
-            ? `پاسخ HTTP سرویس ناموفق بود (${status})`
-            : "پاسخ HTTP سرویس ناموفق بود",
-        );
+        if (verification.http_stub_detected) {
+          bits.push(
+            "آدرس عمومی فقط یک پاسخ آزمایشی (مثل ok/hello-world) برگرداند — اپ واقعی تأیید نشد",
+          );
+        } else {
+          const status = verification.http_status;
+          bits.push(
+            typeof status === "number"
+              ? `پاسخ HTTP سرویس ناموفق بود (${status})`
+              : "پاسخ HTTP سرویس ناموفق بود",
+          );
+        }
+      }
+      const appUrl = verification?.app_url;
+      if (typeof appUrl === "string" && appUrl.trim()) {
+        bits.push(`آدرس بررسی‌شده: ${appUrl.trim()}`);
       }
       if (verification?.blocked_by_dependencies) {
         bits.push("پیش‌نیازهای وابستگی هنوز باز هستند");
@@ -91,10 +101,20 @@ function verificationDetail(
     const bits: string[] = [];
     if (verification?.release_ok === false) bits.push("release was not confirmed");
     if (verification?.http_ok === false) {
-      const status = verification.http_status;
-      bits.push(
-        typeof status === "number" ? `HTTP check failed (${status})` : "HTTP check failed",
-      );
+      if (verification.http_stub_detected) {
+        bits.push(
+          "public URL returned a smoke stub (ok/hello-world) — real app not verified",
+        );
+      } else {
+        const status = verification.http_status;
+        bits.push(
+          typeof status === "number" ? `HTTP check failed (${status})` : "HTTP check failed",
+        );
+      }
+    }
+    const appUrl = verification?.app_url;
+    if (typeof appUrl === "string" && appUrl.trim()) {
+      bits.push(`checked URL: ${appUrl.trim()}`);
     }
     if (verification?.blocked_by_dependencies) bits.push("dependency prerequisites are still open");
     if (openNeeds.some((n) => /dependenc/i.test(n))) {
@@ -116,11 +136,20 @@ export function verificationAssistantText(
   checkpoint?: Record<string, unknown> | null,
 ): string {
   const detail = verificationDetail(language, state, checkpoint);
+  const completeSuccess = checkpoint?.complete_success;
+  const openNeeds = Array.isArray(checkpoint?.open_needs)
+    ? (checkpoint?.open_needs as unknown[]).map(String)
+    : [];
+  const depWarn = openNeeds.some((n) => /dependenc/i.test(n));
+
   if (language === "fa") {
     if (FAIL_STATES.has(state)) {
       return detail
         ? `اجرا تمام شد اما نتیجه تأیید نشد (${state}). ${detail}`
         : `اجرا تمام شد اما نتیجه تأیید نشد (${state}).`;
+    }
+    if (state === "verified" && completeSuccess === false && depWarn) {
+      return "انتشار انجام و تأیید شد، اما پیش‌نیازهایی مثل دیتابیس/دیسک هنوز باز هستند — سرویس ممکن است تا اتصال آن‌ها کامل کار نکند.";
     }
     return `اجرا انجام شد. وضعیت نهایی: ${state}.`;
   }
@@ -128,6 +157,9 @@ export function verificationAssistantText(
     return detail
       ? `Execution finished but verification did not succeed (${state}). ${detail}`
       : `Execution finished but verification did not succeed (${state}).`;
+  }
+  if (state === "verified" && completeSuccess === false && depWarn) {
+    return "Release verified, but dependency prerequisites (e.g. database/disk) are still open — the app may not fully work until they are wired.";
   }
   return `Execution finished. Final state: ${state}.`;
 }

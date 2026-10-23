@@ -160,13 +160,14 @@ def test_characterize_merge_vs_replace_on_mock_semantics() -> None:
     )
 
 
-def test_update_envs_not_allowlisted() -> None:
+def test_update_envs_allowlisted_via_noop() -> None:
+    """Allowlisted for post-DB wire; ops executor still blocks L-D03 user env plans."""
     guard = WriteGuard()
-    with pytest.raises(WriteNotAllowlisted):
-        guard.execute_allowlisted(
-            tool_id="update_envs",
-            payload={"project": "x", "variables": [{"key": "A", "value": "1"}]},
-        )
+    result = guard.execute_allowlisted(
+        tool_id="update_envs",
+        payload={"project": "x", "variables": [{"key": "A", "value": "1"}]},
+    )
+    assert result.get("mode") == "noop" or result.get("provider_write") is False
 
 
 def test_env_execute_blocked_with_approval_zero_http(

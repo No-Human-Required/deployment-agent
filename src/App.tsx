@@ -26,6 +26,7 @@ import {
   X,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
+import { AgentRunCard } from "./components/AgentRunCard";
 import { IntakePanel } from "./components/IntakePanel";
 import { NavigationView, type NavSurface } from "./components/nav/NavigationView";
 import { PlanApprovalPanel } from "./components/PlanApprovalPanel";
@@ -35,6 +36,7 @@ import type { IntakeConfirmValues } from "./components/agent-ui/GenerativeCard";
 import {
   approvePlan,
   assessReadiness,
+  cancelAgentRun,
   collectEvidence,
   createCase,
   createPlan,
@@ -44,13 +46,29 @@ import {
   executePlan,
   getLiaraPlans,
   getServices,
+  getAgentRun,
   getSettings,
   pickLocalPath,
   proposeFixOptions,
+  resumeAgentRun,
+  startAgentRun,
+  steerAgentRun,
+  streamAgentRun,
   verifyResult,
   type Service,
 } from "./lib/api";
-import { resolveChallengeLoopRoute } from "./lib/challengeLoops";
+import {
+  type AgentEvent,
+  type AgentRunView,
+  applyAgentEvent,
+  isAgentRunLive,
+  lastSeq,
+} from "./lib/agentRuns";
+import {
+  isConversationalGoal,
+  resolveChallengeLoopRoute,
+  type ChallengeLoopRoute,
+} from "./lib/challengeLoops";
 import { composerSkills } from "./lib/composerSkills";
 import {
   findConversationInHistory,
@@ -120,7 +138,49 @@ type ChatMessage = {
   text: string;
   kind?: "demo" | "live";
   quickReplies?: QuickReply[];
+  agentRun?: AgentRunView;
 };
+
+/** Deploy and troubleshoot goals go to the autonomous DevOps agent (approve once per run). */
+function agentProjectHint(route: ChallengeLoopRoute): string | null | undefined {
+  if (route.mode === "troubleshoot") return route.projectName;
+  if (route.mode === "intake" && (route.intakeKind === "deploy" || route.intakeKind === "troubleshoot")) {
+    return route.projectHint ?? null;
+  }
+  if (route.mode === "generic_plan" && route.area === "setup_deploy") return null;
+  return undefined;
+}
+
+function findLiveAgentMessage(messages: ChatMessage[]): ChatMessage | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.agentRun && isAgentRunLive(message.agentRun)) return message;
+  }
+  return null;
+}
+
+function findLatestAgentMessage(messages: ChatMessage[]): ChatMessage | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index].agentRun) return messages[index];
+  }
+  return null;
+}
+
+/** Pure hello — not a follow-up question about a running or finished deploy. */
+function isPureGreeting(goal: string): boolean {
+  return /^(سلام|درود|هی|هِی|صبح بخیر|عصر بخیر|شب خوش|hi+|hello|hey|yo|sup)([\s!.?؟…]*)$/iu.test(
+    goal.trim(),
+  );
+}
+
+function liaraAppSlug(folderPath: string | null | undefined): string {
+  const base = (folderPath ?? "").split(/[\\/]/).filter(Boolean).pop() ?? "";
+  return base
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 32);
+}
 type CatalogState = "idle" | "loading" | "ready" | "error";
 type ContextService = { id: string; name: string };
 type AttachPanel = "menu" | "services";
@@ -279,6 +339,9 @@ function App() {
     return route.kind === "settings" ? "Settings" : "New Chat";
   });
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+  const agentStreamsRef = useRef(new Map<string, () => void>());
   const [orchestratorRun, setOrchestratorRun] = useState<OrchestratorRun | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [draft, setDraft] = useState("");
@@ -460,6 +523,35 @@ function App() {
 
   useEffect(() => {
     void refreshCatalog();
+  }, []);
+
+  useEffect(() => {
+    const streams = agentStreamsRef.current;
+    const liveIds = new Set<string>();
+    for (const message of messages) {
+      const view = message.agentRun;
+      if (!view?.runId || !isAgentRunLive(view)) continue;
+      liveIds.add(message.id);
+      if (!streams.has(message.id)) {
+        streams.set(message.id, () => {});
+        void resyncAgentRun(message.id, view.runId);
+      }
+    }
+    for (const [messageId, unsubscribe] of streams) {
+      if (!liveIds.has(messageId)) {
+        unsubscribe();
+        streams.delete(messageId);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages]);
+
+  useEffect(() => {
+    const streams = agentStreamsRef.current;
+    return () => {
+      for (const unsubscribe of streams.values()) unsubscribe();
+      streams.clear();
+    };
   }, []);
 
   useEffect(() => {
@@ -956,6 +1048,109 @@ function App() {
     return { time: new Date().toISOString(), event, actor };
   }
 
+  function updateAgentRun(messageId: string, update: (view: AgentRunView) => AgentRunView) {
+    setMessages((current) =>
+      current.map((message) =>
+        message.id === messageId && message.agentRun ? { ...message, agentRun: update(message.agentRun) } : message,
+      ),
+    );
+  }
+
+  function applyAgentRunEvent(messageId: string, event: AgentEvent) {
+    setMessages((current) => {
+      const target = current.find((message) => message.id === messageId)?.agentRun;
+      if (!target || target.events.some((existing) => existing.seq === event.seq)) return current;
+      const next = current.map((message) =>
+        message.id === messageId ? { ...message, agentRun: applyAgentEvent(target, event) } : message,
+      );
+      const outcome = (event.outcome ?? {}) as { success?: boolean; summary?: string; url?: string };
+      const summary = event.type === "done" ? (outcome.summary ?? "").trim() : "";
+      if (!summary) return next;
+      return [
+        ...next,
+        {
+          id: id(),
+          role: "assistant" as const,
+          text: outcome.success && outcome.url ? `${summary}\n\n${outcome.url}` : summary,
+          ...withQuickReplies(whatNextReplies(language)),
+        },
+      ];
+    });
+  }
+
+  function subscribeAgentRun(messageId: string, runId: string, after: number) {
+    agentStreamsRef.current.get(messageId)?.();
+    const unsubscribe = streamAgentRun(runId, after, {
+      onEvent: (event) => applyAgentRunEvent(messageId, event),
+      onEnd: () => agentStreamsRef.current.delete(messageId),
+      onDrop: () => {
+        agentStreamsRef.current.delete(messageId);
+        window.setTimeout(() => void resyncAgentRun(messageId, runId), 2500);
+      },
+    });
+    agentStreamsRef.current.set(messageId, unsubscribe);
+  }
+
+  async function resyncAgentRun(messageId: string, runId: string) {
+    const view = messagesRef.current.find((message) => message.id === messageId)?.agentRun;
+    if (!view || !isAgentRunLive(view)) return;
+    try {
+      const snapshot = await getAgentRun(runId);
+      for (const event of snapshot.events) applyAgentRunEvent(messageId, event as AgentEvent);
+      const finished = snapshot.events.some((event) => event.type === "done" || event.type === "error");
+      if (!finished) subscribeAgentRun(messageId, runId, snapshot.events.reduce((max, e) => Math.max(max, e.seq), 0));
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      if (/404|not found/i.test(message)) {
+        updateAgentRun(messageId, (current) => ({
+          ...current,
+          status: "error",
+          error:
+            language === "fa"
+              ? "این اجرا روی سرور دیگر در دسترس نیست (احتمالاً سرور ری‌استارت شده). دوباره درخواست دهید."
+              : "This run is no longer on the server (it probably restarted). Ask again to start a new run.",
+        }));
+      } else {
+        window.setTimeout(() => void resyncAgentRun(messageId, runId), 5000);
+      }
+    }
+  }
+
+  async function startAgentForMessage(messageId: string, projectName: string) {
+    const view = messagesRef.current.find((message) => message.id === messageId)?.agentRun;
+    if (!view || !settingsView) return;
+    updateAgentRun(messageId, (current) => ({ ...current, status: "starting", projectName }));
+    try {
+      const started = await startAgentRun({
+        workspaceId: settingsView.workspace_id,
+        goal: view.goal,
+        projectName,
+        projectRoot: localWorkspaceRef.current?.path ?? null,
+        conversationId: conversationIdRef.current,
+      });
+      updateAgentRun(messageId, (current) => ({ ...current, runId: started.run_id, status: "running" }));
+      subscribeAgentRun(messageId, started.run_id, 0);
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      updateAgentRun(messageId, (current) => ({ ...current, status: "error", error: message }));
+    }
+  }
+
+  async function resolveAgentApproval(messageId: string, approved: boolean) {
+    const view = messagesRef.current.find((message) => message.id === messageId)?.agentRun;
+    if (!view?.runId) return;
+    setApprovalBusy(true);
+    try {
+      await resumeAgentRun(view.runId, approved);
+      updateAgentRun(messageId, (current) => ({ ...current, status: "running", pendingApproval: undefined }));
+      if (!agentStreamsRef.current.has(messageId)) subscribeAgentRun(messageId, view.runId, lastSeq(view));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setApprovalBusy(false);
+    }
+  }
+
   async function startOrchestratorGoal(prompt: string, options?: { prependUser?: boolean }) {
     if (!hasLocalWorkspace) {
       setError(strings.folderGateError);
@@ -984,6 +1179,90 @@ function App() {
     setAttachOpen(false);
     if (options?.prependUser !== false) {
       setMessages((current) => [...current, { id: id(), role: "user", text: prompt }]);
+    }
+
+    // Mid-run chat: steer the live DevOps agent instead of starting a fresh welcome/intake turn.
+    const liveAgent = findLiveAgentMessage(messagesRef.current);
+    if (liveAgent?.agentRun?.runId) {
+      const messageId = liveAgent.id;
+      const runId = liveAgent.agentRun.runId;
+      try {
+        await steerAgentRun(runId, prompt);
+        if (!agentStreamsRef.current.has(messageId)) {
+          subscribeAgentRun(messageId, runId, lastSeq(liveAgent.agentRun));
+        }
+        setMessages((current) => [
+          ...current,
+          {
+            id: id(),
+            role: "assistant",
+            text:
+              language === "fa"
+                ? "پیامتان به عامل رسید؛ در مرحلهٔ بعدی لحاظ می‌کند."
+                : "Got it — the agent will take that into account on its next step.",
+          },
+        ]);
+      } catch (cause) {
+        const message = cause instanceof Error ? cause.message : String(cause);
+        setError(message);
+        setMessages((current) => [
+          ...current,
+          {
+            id: id(),
+            role: "assistant",
+            text:
+              language === "fa"
+                ? `نتوانستم پیام را به عامل برسانم: ${message}`
+                : `Could not reach the running agent: ${message}`,
+          },
+        ]);
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    // After a prior agent run, short follow-ups stay on that app — do not reset to the welcome script.
+    const priorAgent = findLatestAgentMessage(messagesRef.current)?.agentRun;
+    if (priorAgent?.projectName && isConversationalGoal(goal) && !isPureGreeting(prompt)) {
+      const projectName = priorAgent.projectName;
+      const followUpGoal =
+        language === "fa"
+          ? `${goal}\n\nادامهٔ کار روی اپ ${projectName} (اجرای قبلی).`
+          : `${goal}\n\nContinue on app ${projectName} (prior agent run).`;
+      setMessages((current) => [
+        ...current,
+        {
+          id: id(),
+          role: "assistant",
+          text:
+            language === "fa"
+              ? `ادامه می‌دهیم روی «${projectName}». اگر درست است تأیید کنید تا عامل پیگیری کند.`
+              : `Continuing on “${projectName}”. Approve to let the agent follow up.`,
+          agentRun: { status: "proposed", goal: followUpGoal, projectName, events: [] },
+        },
+      ]);
+      setLoading(false);
+      return;
+    }
+
+    const agentHint = agentProjectHint(resolveChallengeLoopRoute(goal, { selectedServiceId: primaryContextService }));
+    if (agentHint !== undefined) {
+      const projectName = agentHint || liaraAppSlug(localWorkspaceRef.current?.path);
+      setMessages((current) => [
+        ...current,
+        {
+          id: id(),
+          role: "assistant",
+          text:
+            language === "fa"
+              ? "این کار را به عامل DevOps می‌سپارم: خودش بررسی، اصلاح، استقرار و راستی‌آزمایی می‌کند تا اپ واقعاً بالا بیاید. نام اپ را بررسی و تأیید کنید."
+              : "I’ll hand this to the DevOps agent: it inspects, fixes, deploys and verifies until the app really serves. Check the app name and approve.",
+          agentRun: { status: "proposed", goal, projectName, events: [] },
+        },
+      ]);
+      setLoading(false);
+      return;
     }
 
     try {
@@ -1025,10 +1304,16 @@ function App() {
                   message: f.message,
                   severity: f.severity,
                 })),
-              create_database_enabled: false,
-              create_disk_enabled: false,
+              create_database_enabled: !readiness.open_needs.some((n) =>
+                /dependency_create_ld05|ld05/i.test(n),
+              ),
+              create_disk_enabled: !readiness.open_needs.some((n) =>
+                /dependency_create_ld05|ld05/i.test(n),
+              ),
               open_needs: readiness.open_needs.filter((n) => /dependenc/i.test(n)),
-              can_claim_complete_success: false,
+              can_claim_complete_success: readiness.open_needs.every(
+                (n) => !/dependenc/i.test(n),
+              ),
             }
           : null;
       run = {
@@ -2269,6 +2554,21 @@ function App() {
                         <div className="message-bubble">
                           <p className="message-text">{message.text}</p>
                         </div>
+                        {message.agentRun ? (
+                          <AgentRunCard
+                            view={message.agentRun}
+                            language={language}
+                            busy={approvalBusy}
+                            onStart={(projectName) => void startAgentForMessage(message.id, projectName)}
+                            onCancel={() => updateAgentRun(message.id, (view) => ({ ...view, status: "cancelled" }))}
+                            onStop={() => {
+                              const runId = message.agentRun?.runId;
+                              if (runId) void cancelAgentRun(runId).catch((cause) => setError(String(cause)));
+                            }}
+                            onApprove={() => void resolveAgentApproval(message.id, true)}
+                            onDecline={() => void resolveAgentApproval(message.id, false)}
+                          />
+                        ) : null}
                         {showQuickReplies ? (
                           <div className="quick-replies" role="group" aria-label="پاسخ سریع">
                             {visibleReplies.map((reply) => (
@@ -2747,8 +3047,8 @@ function App() {
                   role="listitem"
                   className={`sidebar-service-item ${isSelected ? "active" : ""}`}
                   onClick={() => selectSidebarService(service)}
-                  title={`${service.name} — ${statusText}`}
-                  aria-label={`${service.name}, ${toneLabel}`}
+                  title={`${service.name} — ${service.app_type} — ${statusText}`}
+                  aria-label={`${service.name}, ${service.kind === "database" ? (language === "fa" ? "دیتابیس" : "database") : service.app_type}, ${toneLabel}`}
                   aria-current={isSelected ? "true" : undefined}
                 >
                   <span
@@ -2756,6 +3056,13 @@ function App() {
                     aria-hidden="true"
                   />
                   <span className="sidebar-service-name">{service.name}</span>
+                  <span className="sidebar-service-kind">
+                    {service.kind === "database"
+                      ? language === "fa"
+                        ? "دیتابیس"
+                        : "DB"
+                      : service.app_type}
+                  </span>
                   <span className="sr-only">{toneLabel}</span>
                 </button>
               );
