@@ -8,6 +8,7 @@ import {
   healthSchema,
   liaraDomainsResultSchema,
   liaraPlansResultSchema,
+  liaraProjectMonitoringSchema,
   liaraProjectSummarySchema,
   maintainAuditResultSchema,
   maintainIncidentsResultSchema,
@@ -26,6 +27,7 @@ import {
   type FixOptionsPayload,
   type LiaraDomain,
   type LiaraPlan,
+  type LiaraProjectMonitoring,
   type MaintainAuditEvent,
   type MaintainIncident,
   type MonitorStatus,
@@ -184,6 +186,23 @@ export async function getDomains(
   if (workspaceId) params.set("workspace_id", workspaceId);
   const raw = await request(`/api/liara/domains?${params.toString()}`);
   return liaraDomainsResultSchema.parse(raw).domains;
+}
+
+/**
+ * Per-project monitoring feed (`GET /api/liara/projects/{name}/monitoring`).
+ * Soft gaps for missing metrics/logs stay on HTTP 200; hard project errors throw.
+ */
+export async function getProjectMonitoring(
+  projectName: string,
+  workspaceId?: string,
+): Promise<LiaraProjectMonitoring> {
+  const name = projectName.trim();
+  if (!name) throw new Error("project name is required");
+  const query = workspaceId ? `?workspace_id=${encodeURIComponent(workspaceId)}` : "";
+  const raw = await request(
+    `/api/liara/projects/${encodeURIComponent(name)}/monitoring${query}`,
+  );
+  return liaraProjectMonitoringSchema.parse(raw);
 }
 
 /** Open/resolved incidents for a workspace (`GET /api/maintain/incidents`). */

@@ -1,0 +1,34 @@
+# Execution notes — 01-monitoring-read-bff
+
+- 01-monitoring-read-bff.md
+  - status: implemented
+  - execution conversation / checkout: hitl-slice-builder (coordinator auto-run); repo `/Users/kamyarpouretesam/Desktop/Clients/24.StarCoach/Projects/hackathon/liara-agent`
+  - changed files / artifacts:
+    - `apps/agent/app/api/liara.py` — combined `GET /api/liara/projects/{name}/monitoring`; public project/metrics/logs normalizers; soft gaps for empty/failed metrics/logs
+    - `apps/agent/tests/test_liara_monitoring.py` — happy path, missing credentials, 404/auth, empty metrics/logs, soft client gaps, helper unit coverage
+    - `.hitl/prompts/sidebar-services-monitoring/execution-notes/01-monitoring-read-bff.md` (this file)
+  - verification run and results:
+    - `cd apps/agent && uv run pytest tests/test_liara_monitoring.py -q` → **11 passed** in ~0.95s
+  - verification not run and limitations:
+    - No live Liara API calls (per prompt; mocked `LiaraClient` only)
+    - Frontend / slice 03 consumer wiring not exercised
+    - Full `apps/agent` pytest suite not run (only new monitoring tests)
+  - finalization basis, if finalized: (none — coordinator reconciles)
+  - implementation decisions / findings:
+    - Preferred combined contract: `GET /api/liara/projects/{name}/monitoring?workspace_id=`
+    - Response shape: `{ project, cpu, memory, logs, gaps, source: "liara_monitoring" }`
+      - `project`: `name`, `project_id`, `type`, `status`, `isDeployed`, `plan_id`, `region` (raw Liara status; no invented enums)
+      - `cpu` / `memory`: `{ available, series }` — empty/null/unsupported → `available: false` + gap
+      - `logs`: `{ available, lines[{ message, timestamp }], truncated }` — last 80 lines; sanitize via `troubleshoot.sanitize_log_line` + `sanitize_for_log`
+      - `gaps`: `[{ source, reason, message }]`
+    - Credential resolution + 400 on missing token mirrors `list_domains`
+    - Hard errors: `LiaraNotFoundError` on `get_project` → **404**; other project client errors → **502** with `exc.to_dict()`
+    - Soft errors: metrics/logs client failures or empties → gap fields, HTTP 200 still (monitoring panel can render partial data)
+  - deviations from prompt: none material (chose combined route as preferred; no separate per-metric routes)
+  - specialist findings / selection changes:
+    - Followed `.cursor/skills/api-design/SKILL.md` + synchronous-apis: read-only operation; distinguish missing credentials (400), missing project (404), upstream auth/transport (502), and partial upstream gaps (200 + `gaps`)
+  - learning candidates, if any: none (implementation-only; no definition-rooted skill gap)
+  - implications for remaining prompts:
+    - Slice **03** can call `GET /api/liara/projects/{name}/monitoring?workspace_id=` and render `project` / `cpu` / `memory` / `logs` / `gaps` without inventing upstream shapes
+    - Slice **02** remains unblocked (disjoint; catalog still from prove-read)
+  - blocking reason / skipped rationale, if applicable: (none)

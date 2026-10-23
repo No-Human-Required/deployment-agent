@@ -94,6 +94,10 @@ import {
 } from "./lib/quickReplies";
 import { buildRequestTimeline } from "./lib/requestTimeline";
 import {
+  serviceStatusTone,
+  serviceStatusToneLabel,
+} from "./lib/serviceStatus";
+import {
   loadUiPreferences,
   patchUiPreferences,
   type UiPreferences,
@@ -135,6 +139,12 @@ const copy = {
     trust: "Sensitive actions always require your approval.",
     powered: "LiaraOps AI can make mistakes. Review operations before approval.",
     foldersSection: "FOLDERS",
+    servicesSection: "SERVICES",
+    servicesEmptyNoToken: "Save a Liara token in Settings to load services.",
+    servicesEmptyLoading: "Loading services…",
+    servicesEmptyError: "Could not load services.",
+    servicesEmptyZero: "No Liara services on this account.",
+    servicesListLabel: "Liara services",
     recentEmpty: "No conversations yet in this folder.",
     recentNeedFolder: "Add a project folder to start chatting.",
     newConversation: "New conversation",
@@ -186,6 +196,12 @@ const copy = {
     trust: "اقدامات حساس همیشه نیاز به تأیید شما دارند.",
     powered: "عامل ممکن است اشتباه کند. پیش از تأیید، عملیات را بررسی کنید.",
     foldersSection: "پوشه‌ها",
+    servicesSection: "سرویس‌ها",
+    servicesEmptyNoToken: "برای بارگذاری سرویس‌ها توکن لیارا را در تنظیمات ذخیره کنید.",
+    servicesEmptyLoading: "در حال بارگذاری سرویس‌ها…",
+    servicesEmptyError: "بارگذاری سرویس‌ها ناموفق بود.",
+    servicesEmptyZero: "سرویسی در این حساب لیارا نیست.",
+    servicesListLabel: "سرویس‌های لیارا",
     recentEmpty: "هنوز گفتگویی در این پوشه نیست.",
     recentNeedFolder: "برای شروع گفتگو یک پوشه پروژه اضافه کنید.",
     newConversation: "گفتگوی جدید",
@@ -246,6 +262,8 @@ function App() {
   const [services, setServices] = useState<Service[]>([]);
   const [servicesState, setServicesState] = useState<CatalogState>("idle");
   const [servicesError, setServicesError] = useState("");
+  /** Hook for slice 03 monitoring panel; selection is account-scoped (not folder-bound). */
+  const [selectedServiceId, setSelectedServiceId] = useState<string | null>(null);
   const [contextServices, setContextServices] = useState<ContextService[]>([]);
   const [contextFiles, setContextFiles] = useState<string[]>([]);
   const [attachOpen, setAttachOpen] = useState(false);
@@ -406,6 +424,7 @@ function App() {
       await hydratePersistence(view.workspace_id);
       if (!view.liara.token_configured) {
         setServices([]);
+        setSelectedServiceId(null);
         setServicesState("ready");
         setError(
           language === "fa"
@@ -418,6 +437,9 @@ function App() {
       setServices(catalog);
       setContextServices((current) =>
         current.filter((item) => catalog.some((service) => service.id === item.id)),
+      );
+      setSelectedServiceId((current) =>
+        current && catalog.some((service) => service.id === current) ? current : null,
       );
       setServicesState("ready");
       setError("");
@@ -1965,6 +1987,12 @@ function App() {
     }
   }
 
+  /** Select account service and open per-service Monitoring in the main pane. */
+  function selectSidebarService(service: Service) {
+    setSelectedServiceId(service.id);
+    navigate("Monitoring");
+  }
+
   function requestNewChat(folderKey?: string) {
     if (folderKey && folderKey !== workspaceKey) {
       const folder = recentWorkspaces.find(
@@ -2429,6 +2457,7 @@ function App() {
         services={services}
         servicesState={servicesState}
         servicesError={servicesError}
+        selectedServiceId={selectedServiceId}
         history={recentConversations}
         onOpenConversation={openConversation}
         onStart={() => navigate("New Chat")}
@@ -2592,6 +2621,54 @@ function App() {
           <FolderPlus size={15} />
           {pickingFolder ? strings.pickFolderBusy : strings.addFolder}
         </button>
+
+        <div className="sidebar-section-label">{strings.servicesSection}</div>
+        <div className="sidebar-services" role="list" aria-label={strings.servicesListLabel}>
+          {(() => {
+            const tokenConfigured = Boolean(settingsView?.liara.token_configured);
+            if (servicesState === "idle" || servicesState === "loading") {
+              return <p className="recent-empty">{strings.servicesEmptyLoading}</p>;
+            }
+            if (!tokenConfigured) {
+              return <p className="recent-empty">{strings.servicesEmptyNoToken}</p>;
+            }
+            if (servicesState === "error") {
+              return (
+                <p className="recent-empty" title={servicesError || undefined}>
+                  {strings.servicesEmptyError}
+                </p>
+              );
+            }
+            if (services.length === 0) {
+              return <p className="recent-empty">{strings.servicesEmptyZero}</p>;
+            }
+            return services.map((service) => {
+              const tone = serviceStatusTone(service.status);
+              const toneLabel = serviceStatusToneLabel(tone, language);
+              const statusText = service.status?.trim() || toneLabel;
+              const isSelected = selectedServiceId === service.id;
+              return (
+                <button
+                  key={service.id}
+                  type="button"
+                  role="listitem"
+                  className={`sidebar-service-item ${isSelected ? "active" : ""}`}
+                  onClick={() => selectSidebarService(service)}
+                  title={`${service.name} — ${statusText}`}
+                  aria-label={`${service.name}, ${toneLabel}`}
+                  aria-current={isSelected ? "true" : undefined}
+                >
+                  <span
+                    className={`status-dot status-dot-${tone}`}
+                    aria-hidden="true"
+                  />
+                  <span className="sidebar-service-name">{service.name}</span>
+                  <span className="sr-only">{toneLabel}</span>
+                </button>
+              );
+            });
+          })()}
+        </div>
 
         <div className="sidebar-section-label">{strings.foldersSection}</div>
         <div className="folder-accordion" role="tree" aria-label={strings.foldersSection}>

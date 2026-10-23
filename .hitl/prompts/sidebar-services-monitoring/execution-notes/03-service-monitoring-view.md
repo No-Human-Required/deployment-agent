@@ -1,0 +1,36 @@
+# Execution notes — 03-service-monitoring-view
+
+- 03-service-monitoring-view.md
+  - status: implemented
+  - execution conversation / checkout: hitl-slice-builder (coordinator auto-run); repo `/Users/kamyarpouretesam/Desktop/Clients/24.StarCoach/Projects/hackathon/liara-agent`
+  - changed files / artifacts:
+    - `src/lib/schemas.ts` — `liaraProjectMonitoringSchema` (+ project/metrics/logs/gap parts) matching BFF `GET /api/liara/projects/{name}/monitoring`
+    - `src/lib/api.ts` — `getProjectMonitoring(projectName, workspaceId?)`
+    - `src/lib/schemas.nav.test.ts` — happy path, soft-gaps, reject missing project name
+    - `src/components/nav/NavigationView.tsx` — Monitoring mode with `selectedServiceId`: fetch + render status/CPU/RAM/logs/gaps + Investigate; refresh; incidents fallback when no selection
+    - `src/App.tsx` — pass `selectedServiceId` into NavigationView (sidebar click → Monitoring already from 02)
+    - `src/index.css` — service-monitor header/logs/gaps styles; unavailable metric tone
+    - `.hitl/prompts/sidebar-services-monitoring/execution-notes/03-service-monitoring-view.md` (this file)
+  - verification run and results:
+    - `npm test -- src/lib/schemas.nav.test.ts src/lib/serviceStatus.test.ts` → **18 passed** (10 nav schemas incl. 3 monitoring + 8 serviceStatus) in ~134ms
+  - verification not run and limitations:
+    - No live Liara / UI smoke (sidebar click → pane with real token)
+    - Full `npm test` / `tsc` not run (scoped to touched FE schema tests per prompt)
+    - Chat send still may require local folder (existing product gate); opening monitoring pane does not
+  - finalization basis, if finalized: (none — last slice; coordinator reconciles acceptance then finalizes)
+  - implementation decisions / findings:
+    - Consumed 01 combined contract one-shot: `{ project, cpu, memory, logs, gaps, source }` — no BFF changes
+    - When `selectedServiceId` set: load monitoring; else keep prior incidents Monitoring surface + hint to pick sidebar service
+    - Metric display: last numeric/`v`/`value` from series list or common wrapper keys; else “series present” copy — no invented charts
+    - Gaps rendered explicitly from `gaps[]` plus per-block unavailable copy when `available: false`
+    - Investigate reuses App `onInvestigate` → `Investigate service {name}` / FA equivalent; builds Service from catalog or monitoring project
+    - Works without local folder: uses companion `settingsView.workspace_id` + token (account-global), same as sidebar catalog
+    - Selected highlight remains sidebar `.active` / `aria-current` from 02
+  - deviations from prompt: none material (kept incidents as empty-selection fallback rather than removing them)
+  - specialist findings / selection changes:
+    - api-design: FE schema mirrors provider soft-gap semantics (200 + gaps); hard errors surface as fetch Error
+    - agent-workspace-ux: monitoring is account-global main pane; not folder-gated; Investigate handoff may still hit chat folder gate on send
+    - ux-design: loading/error/retry/no-token; status tone not color-only (`status-dot` + text); FA/EN labels
+  - learning candidates, if any: none (implementation-only)
+  - implications for remaining prompts: none — last agreed slice
+  - blocking reason / skipped rationale, if applicable: (none)

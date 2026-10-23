@@ -21,16 +21,19 @@ import {
   getDomains,
   getIncidents,
   getLiaraPlans,
+  getProjectMonitoring,
   type Service,
 } from "../../lib/api";
 import type { Conversation } from "../../lib/conversations";
 import type {
   LiaraDomain,
   LiaraPlan,
+  LiaraProjectMonitoring,
   MaintainAuditEvent,
   MaintainIncident,
   SettingsView,
 } from "../../lib/schemas";
+import { serviceStatusTone, serviceStatusToneLabel } from "../../lib/serviceStatus";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 
@@ -53,6 +56,8 @@ type Props = {
   services: Service[];
   servicesState: LoadState;
   servicesError: string;
+  /** Account service selected from sidebar — drives per-project monitoring pane. */
+  selectedServiceId?: string | null;
   history: Conversation[];
   onOpenConversation: (conversation: Conversation) => void;
   onStart: () => void;
@@ -64,6 +69,45 @@ type Props = {
   /** Starts chat intake for domain attach — never writes from this nav surface. */
   onStartDomainGoal: (projectName?: string) => void;
 };
+
+/** Last numeric-ish value from a Liara metrics series (list or `{ data|values|… }`). */
+function lastMetricSummary(series: unknown): string | null {
+  const formatPoint = (point: unknown): string | null => {
+    if (point == null) return null;
+    if (typeof point === "number" && Number.isFinite(point)) return String(point);
+    if (typeof point === "string" && point.trim()) return point.trim();
+    if (typeof point === "object" && !Array.isArray(point)) {
+      const row = point as Record<string, unknown>;
+      for (const key of ["v", "value", "cpu", "memory", "usage", "y"]) {
+        const val = row[key];
+        if (typeof val === "number" && Number.isFinite(val)) return String(val);
+        if (typeof val === "string" && val.trim()) return val.trim();
+      }
+    }
+    return null;
+  };
+  if (series == null) return null;
+  if (Array.isArray(series) && series.length > 0) {
+    return formatPoint(series[series.length - 1]);
+  }
+  if (typeof series === "object") {
+    const obj = series as Record<string, unknown>;
+    for (const key of ["data", "metrics", "values", "series", "points"]) {
+      const nested = obj[key];
+      if (Array.isArray(nested) && nested.length > 0) {
+        return formatPoint(nested[nested.length - 1]);
+      }
+    }
+  }
+  return null;
+}
+
+function statusBadgeClass(tone: ReturnType<typeof serviceStatusTone>): string {
+  if (tone === "online") return "status-badge status-good";
+  if (tone === "error") return "status-badge status-error";
+  if (tone === "stopped") return "status-badge status-muted";
+  return "status-badge status-muted";
+}
 
 const meta = {
   en: {
@@ -79,7 +123,7 @@ const meta = {
     },
     Monitoring: {
       title: "Monitoring",
-      subtitle: "Incidents from the companion maintain API.",
+      subtitle: "Live status, resources, and logs for a selected service.",
       icon: Activity,
     },
     Domains: {
@@ -116,7 +160,7 @@ const meta = {
     },
     Monitoring: {
       title: "پایش",
-      subtitle: "حوادث از API نگهداری همراه.",
+      subtitle: "وضعیت زنده، منابع و لاگ برای سرویس انتخاب‌شده.",
       icon: Activity,
     },
     Domains: {
@@ -169,6 +213,20 @@ const labels = {
     monitorEmptyBody: "Enable a monitor from chat when you are ready. Listing by monitor id exists; there is no fake metric dashboard.",
     monitorCta: "Ask agent to set up monitoring",
     monitorNeedWorkspace: "Workspace settings are required to list incidents.",
+    serviceMonitorPick: "Select a service from the sidebar to open its monitoring view.",
+    serviceMonitorEyebrow: "SERVICE",
+    serviceMonitorCpu: "CPU",
+    serviceMonitorMemory: "Memory",
+    serviceMonitorLogs: "Recent logs",
+    serviceMonitorGaps: "API gaps",
+    serviceMonitorUnavailable: "Unavailable from Liara API",
+    serviceMonitorLast: "Last value",
+    serviceMonitorNoValue: "Series present — no single summary value",
+    serviceMonitorTruncated: "Showing latest lines (truncated)",
+    serviceMonitorError: "Could not load monitoring for this service.",
+    serviceMonitorMeta: "Type · plan · region",
+    serviceMonitorDeployed: "Deployed",
+    serviceMonitorNotDeployed: "Not deployed",
     domainsEyebrow: "DOMAINS FOR PROJECT",
     domainsProjectLabel: "Project",
     domainsPickProject: "Select a project to list domains",
@@ -215,6 +273,20 @@ const labels = {
     monitorEmptyBody: "وقتی آماده بودید از گفتگو مانیتور را فعال کنید. داشبورد متریک جعلی نمایش داده نمی‌شود.",
     monitorCta: "از عامل بخواهید پایش را راه‌اندازی کند",
     monitorNeedWorkspace: "برای فهرست حوادث، تنظیمات فضای کار لازم است.",
+    serviceMonitorPick: "از سایدبار یک سرویس انتخاب کنید تا پایش آن باز شود.",
+    serviceMonitorEyebrow: "سرویس",
+    serviceMonitorCpu: "پردازنده",
+    serviceMonitorMemory: "حافظه",
+    serviceMonitorLogs: "لاگ‌های اخیر",
+    serviceMonitorGaps: "محدودیت‌های API",
+    serviceMonitorUnavailable: "از API لیارا در دسترس نیست",
+    serviceMonitorLast: "آخرین مقدار",
+    serviceMonitorNoValue: "سری موجود است — مقدار خلاصهٔ تکی نیست",
+    serviceMonitorTruncated: "آخرین خطوط (کوتاه‌شده)",
+    serviceMonitorError: "بارگذاری پایش این سرویس ممکن نشد.",
+    serviceMonitorMeta: "نوع · پلن · منطقه",
+    serviceMonitorDeployed: "استقرار یافته",
+    serviceMonitorNotDeployed: "استقرار نیافته",
     domainsEyebrow: "دامنه‌های پروژه",
     domainsProjectLabel: "پروژه",
     domainsPickProject: "برای دیدن دامنه‌ها یک پروژه انتخاب کنید",
@@ -279,6 +351,7 @@ export function NavigationView({
   services,
   servicesState,
   servicesError,
+  selectedServiceId = null,
   history,
   onOpenConversation,
   onStart,
@@ -294,6 +367,7 @@ export function NavigationView({
   const Icon = content.icon;
   const tokenConfigured = Boolean(settingsView?.liara.token_configured);
   const workspaceId = settingsView?.workspace_id;
+  const selectedProject = selectedServiceId?.trim() || "";
 
   const [plans, setPlans] = useState<LiaraPlan[]>([]);
   const [plansState, setPlansState] = useState<LoadState>("idle");
@@ -302,6 +376,10 @@ export function NavigationView({
   const [incidents, setIncidents] = useState<MaintainIncident[]>([]);
   const [incidentsState, setIncidentsState] = useState<LoadState>("idle");
   const [incidentsError, setIncidentsError] = useState("");
+
+  const [serviceMonitoring, setServiceMonitoring] = useState<LiaraProjectMonitoring | null>(null);
+  const [serviceMonitoringState, setServiceMonitoringState] = useState<LoadState>("idle");
+  const [serviceMonitoringError, setServiceMonitoringError] = useState("");
 
   const [audit, setAudit] = useState<MaintainAuditEvent[]>([]);
   const [auditState, setAuditState] = useState<LoadState>("idle");
@@ -352,6 +430,35 @@ export function NavigationView({
     }
   }
 
+  async function loadServiceMonitoring(projectName: string) {
+    if (!tokenConfigured) {
+      setServiceMonitoring(null);
+      setServiceMonitoringState("ready");
+      setServiceMonitoringError("");
+      return;
+    }
+    const name = projectName.trim();
+    if (!name) {
+      setServiceMonitoring(null);
+      setServiceMonitoringState("idle");
+      setServiceMonitoringError("");
+      return;
+    }
+    setServiceMonitoringState("loading");
+    setServiceMonitoringError("");
+    try {
+      const feed = await getProjectMonitoring(name, workspaceId);
+      setServiceMonitoring(feed);
+      setServiceMonitoringState("ready");
+    } catch (cause) {
+      setServiceMonitoring(null);
+      setServiceMonitoringState("error");
+      setServiceMonitoringError(
+        cause instanceof Error ? cause.message : t.serviceMonitorError,
+      );
+    }
+  }
+
   async function loadAudit() {
     if (!workspaceId) {
       setAudit([]);
@@ -394,10 +501,22 @@ export function NavigationView({
 
   useEffect(() => {
     if (activeNav === "Deployments") void loadPlans();
-    if (activeNav === "Monitoring") void loadIncidents();
     if (activeNav === "Agent History") void loadAudit();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reload when surface / credentials change
   }, [activeNav, workspaceId, tokenConfigured]);
+
+  useEffect(() => {
+    if (activeNav !== "Monitoring") return;
+    if (selectedProject) {
+      void loadServiceMonitoring(selectedProject);
+      return;
+    }
+    setServiceMonitoring(null);
+    setServiceMonitoringState("idle");
+    setServiceMonitoringError("");
+    void loadIncidents();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- selection drives monitoring vs incidents
+  }, [activeNav, selectedProject, workspaceId, tokenConfigured]);
 
   useEffect(() => {
     if (activeNav !== "Domains") return;
@@ -580,13 +699,187 @@ export function NavigationView({
     );
   }
 
+  function renderServiceMonitoring() {
+    if (!tokenConfigured) {
+      return (
+        <StateCard
+          tone="warn"
+          title={t.noTokenTitle}
+          body={t.noTokenBody}
+          actionLabel={t.openSettings}
+          onAction={onOpenSettings}
+        />
+      );
+    }
+    if (serviceMonitoringState === "loading" || serviceMonitoringState === "idle") {
+      return <StateCard tone="loading" title={t.loading} body="" />;
+    }
+    if (serviceMonitoringState === "error") {
+      return (
+        <StateCard
+          tone="error"
+          title={serviceMonitoringError || t.serviceMonitorError}
+          body=""
+          actionLabel={t.retry}
+          onAction={() => void loadServiceMonitoring(selectedProject)}
+        />
+      );
+    }
+    const feed = serviceMonitoring;
+    if (!feed) {
+      return (
+        <StateCard
+          tone="error"
+          title={t.serviceMonitorError}
+          body=""
+          actionLabel={t.retry}
+          onAction={() => void loadServiceMonitoring(selectedProject)}
+        />
+      );
+    }
+
+    const project = feed.project;
+    const tone = serviceStatusTone(project.status, project.isDeployed);
+    const toneLabel = serviceStatusToneLabel(tone, language);
+    const statusText = project.status?.trim() || toneLabel;
+    const catalogService = services.find((s) => s.id === selectedProject);
+    const investigateService: Service = catalogService ?? {
+      id: project.project_id || project.name,
+      name: project.name,
+      app_type: project.type || "unknown",
+      region: project.region || "—",
+      status: statusText,
+      url: "",
+      uptime: "—",
+    };
+    const cpuSummary = feed.cpu.available ? lastMetricSummary(feed.cpu.series) : null;
+    const memorySummary = feed.memory.available
+      ? lastMetricSummary(feed.memory.series)
+      : null;
+    const metaParts = [
+      project.type,
+      project.plan_id,
+      project.region,
+    ].filter((part): part is string => Boolean(part && String(part).trim()));
+
+    return (
+      <div className="nav-stack">
+        <Card className="nav-detail-card">
+          <div className="section-eyebrow">{t.serviceMonitorEyebrow}</div>
+          <div className="service-monitor-header">
+            <div className="min-w-0 flex-1">
+              <h3 className="service-monitor-title">{project.name}</h3>
+              <p className="nav-inline-muted mt-1">
+                {metaParts.length > 0 ? metaParts.join(" · ") : t.serviceMonitorMeta}
+                {project.isDeployed === true
+                  ? ` · ${t.serviceMonitorDeployed}`
+                  : project.isDeployed === false
+                    ? ` · ${t.serviceMonitorNotDeployed}`
+                    : ""}
+              </p>
+            </div>
+            <span className={statusBadgeClass(tone)} title={statusText}>
+              <span className={`status-dot status-dot-${tone}`} aria-hidden="true" />
+              {statusText}
+            </span>
+          </div>
+          <div className="service-monitor-actions">
+            <Button
+              variant="secondary"
+              onClick={() => onInvestigate(investigateService)}
+            >
+              {t.investigate} <ArrowUp size={12} />
+            </Button>
+          </div>
+        </Card>
+
+        <div className="monitoring-grid">
+          <Card className="nav-detail-card monitor-card">
+            <Activity size={14} />
+            <span>{t.serviceMonitorCpu}</span>
+            {feed.cpu.available ? (
+              <>
+                <strong>{cpuSummary ?? "—"}</strong>
+                <small>
+                  {cpuSummary ? t.serviceMonitorLast : t.serviceMonitorNoValue}
+                </small>
+              </>
+            ) : (
+              <>
+                <strong className="monitor-unavailable">—</strong>
+                <small>{t.serviceMonitorUnavailable}</small>
+              </>
+            )}
+          </Card>
+          <Card className="nav-detail-card monitor-card">
+            <Server size={14} />
+            <span>{t.serviceMonitorMemory}</span>
+            {feed.memory.available ? (
+              <>
+                <strong>{memorySummary ?? "—"}</strong>
+                <small>
+                  {memorySummary ? t.serviceMonitorLast : t.serviceMonitorNoValue}
+                </small>
+              </>
+            ) : (
+              <>
+                <strong className="monitor-unavailable">—</strong>
+                <small>{t.serviceMonitorUnavailable}</small>
+              </>
+            )}
+          </Card>
+        </div>
+
+        <Card className="nav-detail-card">
+          <div className="section-eyebrow">{t.serviceMonitorLogs}</div>
+          {feed.logs.available && feed.logs.lines.length > 0 ? (
+            <>
+              {feed.logs.truncated ? (
+                <p className="nav-inline-muted mb-2">{t.serviceMonitorTruncated}</p>
+              ) : null}
+              <ul className="service-monitor-logs" aria-label={t.serviceMonitorLogs}>
+                {feed.logs.lines.map((line, index) => (
+                  <li key={`${line.timestamp ?? "log"}-${index}`}>
+                    {line.timestamp ? (
+                      <time dateTime={line.timestamp}>{line.timestamp}</time>
+                    ) : null}
+                    <code>{line.message}</code>
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : (
+            <p className="nav-inline-muted">{t.serviceMonitorUnavailable}</p>
+          )}
+        </Card>
+
+        {feed.gaps.length > 0 ? (
+          <Card className="nav-detail-card" role="status">
+            <div className="section-eyebrow">{t.serviceMonitorGaps}</div>
+            <ul className="service-monitor-gaps">
+              {feed.gaps.map((gap) => (
+                <li key={`${gap.source}-${gap.reason}`}>
+                  <strong>{gap.source}</strong>
+                  <span>{gap.message}</span>
+                </li>
+              ))}
+            </ul>
+          </Card>
+        ) : null}
+      </div>
+    );
+  }
+
   function renderMonitoring() {
+    if (selectedProject) {
+      return renderServiceMonitoring();
+    }
     if (!workspaceId) {
       return (
         <StateCard
           tone="warn"
           title={t.monitorNeedWorkspace}
-          body={t.noTokenBody}
+          body={t.serviceMonitorPick}
           actionLabel={t.openSettings}
           onAction={onOpenSettings}
         />
@@ -610,41 +903,47 @@ export function NavigationView({
       return (
         <StateCard
           title={t.monitorEmptyTitle}
-          body={t.monitorEmptyBody}
+          body={`${t.monitorEmptyBody} ${t.serviceMonitorPick}`}
           actionLabel={t.monitorCta}
           onAction={onStartMonitorGoal}
         />
       );
     }
     return (
-      <Card className="nav-detail-card">
-        <div className="section-eyebrow">{t.monitorEyebrow}</div>
-        {incidents.map((incident) => (
-          <div className="release-row" key={incident.incident_id}>
-            <span className="release-indicator release-warn">
-              <Activity size={12} />
-            </span>
-            <div className="min-w-0 flex-1">
-              <p className="text-sm text-slate-200">{incident.title}</p>
-              <p className="mt-1 text-xs text-slate-600">
-                {incident.alert_count} {t.alerts}
-                {incident.opened_at
-                  ? ` · ${new Date(incident.opened_at).toLocaleString()}`
-                  : ""}
-              </p>
+      <div className="nav-stack">
+        <StateCard
+          title={t.serviceMonitorPick}
+          body=""
+        />
+        <Card className="nav-detail-card">
+          <div className="section-eyebrow">{t.monitorEyebrow}</div>
+          {incidents.map((incident) => (
+            <div className="release-row" key={incident.incident_id}>
+              <span className="release-indicator release-warn">
+                <Activity size={12} />
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm text-slate-200">{incident.title}</p>
+                <p className="mt-1 text-xs text-slate-600">
+                  {incident.alert_count} {t.alerts}
+                  {incident.opened_at
+                    ? ` · ${new Date(incident.opened_at).toLocaleString()}`
+                    : ""}
+                </p>
+              </div>
+              <span
+                className={
+                  incident.status === "open"
+                    ? "status-badge status-warn"
+                    : "status-badge status-muted"
+                }
+              >
+                {incident.status}
+              </span>
             </div>
-            <span
-              className={
-                incident.status === "open"
-                  ? "status-badge status-warn"
-                  : "status-badge status-muted"
-              }
-            >
-              {incident.status}
-            </span>
-          </div>
-        ))}
-      </Card>
+          ))}
+        </Card>
+      </div>
     );
   }
 
@@ -844,7 +1143,11 @@ export function NavigationView({
       if (activeNav === "Deployments") void loadPlans();
       return;
     }
-    if (activeNav === "Monitoring") void loadIncidents();
+    if (activeNav === "Monitoring") {
+      if (selectedProject) void loadServiceMonitoring(selectedProject);
+      else void loadIncidents();
+      return;
+    }
     if (activeNav === "Domains") {
       void onRefreshServices();
       if (domainProject) void loadDomains(domainProject);
@@ -875,7 +1178,7 @@ export function NavigationView({
       </header>
       <div className="nav-view-content">
         <motion.div
-          key={activeNav}
+          key={`${activeNav}:${selectedProject || "default"}`}
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.22, ease: [0.22, 0.75, 0.28, 1] }}
@@ -885,7 +1188,11 @@ export function NavigationView({
               <Icon size={20} />
             </div>
             <div>
-              <h1>{content.title}</h1>
+              <h1>
+                {activeNav === "Monitoring" && selectedProject
+                  ? selectedProject
+                  : content.title}
+              </h1>
               <p>{content.subtitle}</p>
             </div>
             <div className="logical-end flex items-center gap-2">

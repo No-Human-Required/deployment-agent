@@ -444,6 +444,51 @@ export const liaraDomainsResultSchema = z.object({
   source: z.string().optional(),
 });
 
+/** Project row from `GET /api/liara/projects/{name}/monitoring` (sanitized Liara detail). */
+export const liaraMonitoringProjectSchema = z.object({
+  name: z.string(),
+  project_id: z.string(),
+  type: z.string().nullable().optional(),
+  status: z.string().nullable().optional(),
+  isDeployed: z.boolean().nullable().optional(),
+  plan_id: z.string().nullable().optional(),
+  region: z.string().nullable().optional(),
+});
+
+export const liaraMonitoringMetricsBlockSchema = z.object({
+  available: z.boolean(),
+  series: z.unknown().nullable().optional(),
+});
+
+export const liaraMonitoringLogLineSchema = z.object({
+  message: z.string(),
+  timestamp: z.string().nullable().optional(),
+});
+
+export const liaraMonitoringLogsBlockSchema = z.object({
+  available: z.boolean(),
+  lines: z.array(liaraMonitoringLogLineSchema),
+  truncated: z.boolean(),
+});
+
+export const liaraMonitoringGapSchema = z.object({
+  source: z.string(),
+  reason: z.string(),
+  message: z.string(),
+});
+
+/** Combined monitoring feed — soft gaps keep HTTP 200 with partial data. */
+export const liaraProjectMonitoringSchema = z.object({
+  project: liaraMonitoringProjectSchema,
+  cpu: liaraMonitoringMetricsBlockSchema,
+  memory: liaraMonitoringMetricsBlockSchema,
+  logs: liaraMonitoringLogsBlockSchema,
+  gaps: z.array(liaraMonitoringGapSchema),
+  source: z.literal("liara_monitoring").or(z.string()),
+});
+
+export type LiaraProjectMonitoring = z.infer<typeof liaraProjectMonitoringSchema>;
+
 /** Maintain incident card from `GET /api/maintain/incidents`. */
 export const maintainIncidentSchema = z.object({
   incident_id: z.string(),

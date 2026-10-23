@@ -1,0 +1,32 @@
+# Execution notes — 02-sidebar-services-list
+
+- 02-sidebar-services-list.md
+  - status: implemented
+  - execution conversation / checkout: hitl-slice-builder (coordinator auto-run); repo `/Users/kamyarpouretesam/Desktop/Clients/24.StarCoach/Projects/hackathon/liara-agent`
+  - changed files / artifacts:
+    - `src/lib/serviceStatus.ts` — `serviceStatusTone` + `serviceStatusToneLabel` (online/error/stopped/unknown)
+    - `src/lib/serviceStatus.test.ts` — tone mapping + label coverage
+    - `src/App.tsx` — Services section above Folders; FA/EN empty states; `selectedServiceId` + navigate to `Monitoring` on click
+    - `src/index.css` — `.sidebar-services` / `.sidebar-service-item`; `.status-dot-{online,error,stopped,unknown}`
+    - `.hitl/prompts/sidebar-services-monitoring/execution-notes/02-sidebar-services-list.md` (this file)
+  - verification run and results:
+    - `npm test -- src/lib/serviceStatus.test.ts` → **8 passed** in ~97ms
+  - verification not run and limitations:
+    - Manual visual sidebar order / RTL smoke not run (app not required for this slice)
+    - Full `npm test` / `tsc` suite not run (scoped to serviceStatus as prompt Verification)
+    - Monitoring main pane still shows existing incidents view until slice 03
+  - finalization basis, if finalized: (none — coordinator reconciles)
+  - implementation decisions / findings:
+    - Reused existing `services` / `servicesState` / `servicesError` / `refreshCatalog` catalog; no folder coupling
+    - Status tones: RUNNING|STARTED|READY|ACTIVE → online; FAILED|ERROR|CRASH(ED) → error; STOPPED → stopped; else unknown; empty + `isDeployed` or catalog `"deployed"` → online
+    - Cheap 03 hook: `selectedServiceId` + `selectSidebarService` → `navigate("Monitoring")` without metrics fetch
+    - Accessibility: `role="list"` / listitem buttons; `aria-label` + `sr-only` tone text; title with raw status
+    - Section visible without local folder (same account-global model as Settings footer)
+  - deviations from prompt: none material
+  - specialist findings / selection changes:
+    - agent-workspace-ux: services as account-global above workspace-scoped folders
+    - ux-design: empty/loading/error/no-token/zero states; status not color-only
+  - learning candidates, if any: none (implementation-only)
+  - implications for remaining prompts:
+    - Slice **03** should consume `selectedServiceId` (and/or click wiring) and fetch `GET /api/liara/projects/{name}/monitoring` instead of generic incidents Monitoring
+  - blocking reason / skipped rationale, if applicable: (none)

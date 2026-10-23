@@ -3,11 +3,11 @@
 ## Developer Overview
 
 - **Goal:** سرویس‌های لیارا به‌عنوان موجودیت مستقل حساب کاربری در سایدبار (بالای پوشه‌ها) با نقطه وضعیت؛ کلیک → مانیتورینگ همان سرویس در ناحیه اصلی (وضعیت زنده، CPU/RAM در صورت دسترسی API، لاگ‌های اخیر + CTA Investigate).
-- **Expected outputs:** BFF read endpoints برای جزئیات/متریک/لاگ؛ نگاشت وضعیت → tone؛ بخش سایدبار Services؛ view مانیتورینگ per-service در شِل.
-- **Ownership:** UI `src/` (به‌ویژه `App.tsx`, `NavigationView.tsx`, `api.ts`, CSS)؛ BFF `apps/agent/app/api/liara.py` + schemas/tests؛ کلاینت موجود `liara_client.py` بدون اختراع API بالادستی.
-- **Boundaries:** بدون write/ops جدید؛ بدون وابستگی سرویس به پوشه محلی؛ محدودیت API لیارا باید به کاربر اعلام شود.
-- **Acceptance evidence:** با توکن معتبر، لیست بالای پوشه‌ها؛ رنگ نقطه مطابق وضعیت؛ کلیک پنل مانیتورینگ همان سرویس را در main pane نشان می‌دهد؛ بدون پوشه هم کار می‌کند؛ بدون توکن/بدون سرویس empty state روشن.
-- **Open decisions:** توافق روی لیست promptها (در انتظار).
+- **Expected outputs:** Delivered — BFF monitoring read; status tones; sidebar Services; per-service monitoring main view.
+- **Ownership:** UI `src/`; BFF `apps/agent/app/api/liara.py`.
+- **Boundaries:** no new writes; no folder↔service binding; API gaps surfaced.
+- **Acceptance evidence:** unit/integration tests passed for BFF + FE mapping/schema; live UI smoke not run.
+- **Open decisions:** none. Auto-run complete.
 
 ## Decision Topics
 
@@ -18,14 +18,15 @@
 | Panel placement | decided | ناحیه اصلی (NavigationView / main pane) | — |
 | Folder coupling | decided | سرویس مستقل از پوشه؛ حتی بدون فولدر نمایش داده شود | — |
 | Status tones | decided | آنلاین سبز؛ خطا قرمز؛ استاپ خاکستری؛ ناشناخته muted | — |
-| Prompt list | proposed | 3 اسلایس عمودی (پایین) | توافق روی لیست؟ |
+| Prompt list | decided | 3 اسلایس؛ توافق 2026-10-23 («بله») | — |
 
 ## Run Mode
 
 - mode: auto
-- run state: (pending list agreement)
-- enabled by: `/hitl-define --auto` (2026-10-23)
-- pause reason: awaiting agreement to proposed prompt list
+- run state: complete
+- enabled by: `/hitl-define --auto` (2026-10-23) + list agreement («بله»)
+- pause reason: (none)
+- completed: 2026-10-23 — all 3 agreed slices finalized
 
 ## Source Identity
 
@@ -118,7 +119,7 @@ Main pane
 ## Conflicts / Open Questions
 
 - (none blocking) Exact Monitoring view layout polish deferred to implementer within existing design system.
-- Prompt list agreement pending.
+- (none)
 
 ## Assumptions
 
@@ -146,37 +147,37 @@ Vertical slices: (1) BFF read contract, (2) sidebar list + tones, (3) monitoring
 
 ## Agreed Prompt List
 
-_(proposed — awaiting developer agreement)_
+Agreed 2026-10-23.
 
 ### 01 — Liara monitoring read BFF
 
-- **Description:** Expose authenticated read endpoints for project detail, CPU/memory metrics, and recent logs via existing `LiaraClient`; document gap responses.
-- **Increment:** Usable HTTP contract for the monitoring UI.
-- **Acceptance:** Tests cover 200 shape, 401/404, and empty metrics/logs without crashing.
+- **File:** `01-monitoring-read-bff.md`
 - **Depends on:** —
-- **Touches:** `apps/agent/app/api/liara.py`, schemas, tests; maybe thin service helper.
+- **Blocks:** 03
+- **Can run in parallel with:** 02 (disjoint files)
+- **Expected touched areas:** `apps/agent/app/api/liara.py`, tests
+- **Execution status:** finalized
 - **Skills:** api-design
-- **Parallel:** no (foundation)
 
 ### 02 — Sidebar services above folders
 
-- **Description:** Account-scoped Services section above Folders with status dots (online/error/stopped/unknown); empty/error when no token or no projects; no folder required.
-- **Increment:** Visible service inventory in the shell.
-- **Acceptance:** Services render above folders without workspace; tones match mapping; RTL/FA labels.
-- **Depends on:** — (uses existing `getServices`; status map helper)
-- **Touches:** `src/App.tsx`, `src/index.css`, maybe `src/lib/serviceStatus.ts` + test
+- **File:** `02-sidebar-services-list.md`
+- **Depends on:** —
+- **Blocks:** 03
+- **Can run in parallel with:** 01
+- **Expected touched areas:** `src/App.tsx`, `src/lib/serviceStatus.ts`, CSS
+- **Execution status:** finalized
 - **Skills:** agent-workspace-ux, ux-design
-- **Parallel:** can start with 01 (disjoint files) if status map is frontend-only
 
 ### 03 — Per-service monitoring main view
 
-- **Description:** Clicking a sidebar service opens main-pane monitoring for that service (live status, CPU/RAM, recent logs, Investigate CTA); clear API-limitation copy; highlight selected service.
-- **Increment:** End-to-end sidebar → monitoring journey.
-- **Acceptance:** Click navigates to monitoring for selected project; shows available data / gaps; Investigate hands off to chat; works without local folder.
-- **Depends on:** 01 (data), 02 (entry points / selection)
-- **Touches:** `src/App.tsx`, `src/components/nav/NavigationView.tsx`, `src/lib/api.ts`, CSS
+- **File:** `03-service-monitoring-view.md`
+- **Depends on:** 01, 02
+- **Blocks:** —
+- **Can run in parallel with:** —
+- **Expected touched areas:** `App.tsx`, `NavigationView.tsx`, `api.ts`, schemas
+- **Execution status:** finalized
 - **Skills:** agent-workspace-ux, ux-design, api-design
-- **Parallel:** no
 
 ## Prompt Dependency Map
 
@@ -189,15 +190,39 @@ flowchart TD
 
 ## Drafted Prompts
 
-(none yet — write after list agreement)
+- `01-monitoring-read-bff.md` — ready
+- `02-sidebar-services-list.md` — ready
+- `03-service-monitoring-view.md` — ready (blocked until 01+02 finalized)
 
 ## Execution Handoffs
 
-(none)
+- All slices finalized. Review/submit remain manual.
 
 ## Prompt Execution Progress
 
-(none)
+- 01-monitoring-read-bff.md
+  - status: finalized
+  - execution conversation / checkout: [01 builder](e2a51541-b899-47cc-b0bb-31cdc5d6baff); coordinator verified
+  - changed files / artifacts: `apps/agent/app/api/liara.py`, `apps/agent/tests/test_liara_monitoring.py`, `execution-notes/01-monitoring-read-bff.md`
+  - verification run and results: `uv run pytest tests/test_liara_monitoring.py -q` → 11 passed
+  - verification not run: live Liara; full agent suite
+  - finalization basis: auto, verified against agreed criteria
+  - implementation decisions: combined `GET /api/liara/projects/{name}/monitoring`
+- 02-sidebar-services-list.md
+  - status: finalized
+  - execution conversation / checkout: [02 builder](2fab0690-d726-4456-b67e-925aca74aecf); coordinator verified
+  - changed files / artifacts: `src/lib/serviceStatus.ts`, `serviceStatus.test.ts`, `App.tsx`, `index.css`, `execution-notes/02-sidebar-services-list.md`
+  - verification run and results: `npm test -- src/lib/serviceStatus.test.ts` → 8 passed
+  - finalization basis: auto, verified against agreed criteria
+  - implementation decisions: sidebar above folders; `selectedServiceId` + Monitoring nav
+- 03-service-monitoring-view.md
+  - status: finalized
+  - execution conversation / checkout: [03 builder](10a22bd2-9fd6-4493-a792-2f6e666df4b6); coordinator verified
+  - changed files / artifacts: `schemas.ts`, `api.ts`, `schemas.nav.test.ts`, `NavigationView.tsx`, `App.tsx`, `index.css`, `execution-notes/03-service-monitoring-view.md`
+  - verification run and results: `npm test -- src/lib/schemas.nav.test.ts src/lib/serviceStatus.test.ts` → 18 passed
+  - verification not run: live Liara/UI smoke; full suite
+  - finalization basis: auto, verified against agreed criteria
+  - implementation decisions: per-service Monitoring pane; incidents fallback when none selected
 
 ## Reconciliation Notes
 
@@ -210,3 +235,7 @@ flowchart TD
 ## Progress
 
 - 2026-10-23: Intention framed; monitoring content, placement, folder independence decided; plan created; prompt list proposed for agreement.
+- 2026-10-23: List agreed («بله»); prompts written; auto-run started; 01 building.
+- 2026-10-23: 01 finalized (11 pytest); 02 building.
+- 2026-10-23: 02 finalized (8 vitest); 03 building.
+- 2026-10-23: 03 finalized (18 vitest); auto-run complete.
