@@ -10,6 +10,8 @@ services:
       POSTGRES_DB: liara_companion
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      # Creates liara_companion_test on first volume init only (pytest isolation).
+      - ./docker/postgres/init-test-db.sql:/docker-entrypoint-initdb.d/10-test-db.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U liara -d liara_companion"]
       interval: 5s

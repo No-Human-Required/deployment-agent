@@ -43,6 +43,25 @@ def _mock_deploy_transport(
             if timeout_on == "releases" and path.endswith("/releases"):
                 raise httpx.ReadTimeout("slow releases", request=request)
 
+        if method == "GET" and path == "/v1/networks":
+            return httpx.Response(
+                200,
+                json={"networks": [{"_id": "net-mock-1", "name": "companion-net"}]},
+            )
+        if method == "GET" and path == "/v1/me":
+            return httpx.Response(
+                200,
+                json={
+                    "plans": {
+                        "projectBundlePlans": {
+                            "free": {"free": {"available": True, "displayPrice": 0}},
+                            "small-g2": {
+                                "basic": {"available": True, "displayPrice": 1}
+                            },
+                        }
+                    }
+                },
+            )
         if method == "POST" and path == "/v1/projects":
             return httpx.Response(200, content=b"")
         if method == "POST" and path.endswith("/sources"):
@@ -194,6 +213,22 @@ def test_timeout_marks_unknown_reconcile_no_blind_retry(
         nonlocal create_posts
         method = request.method.upper()
         path = request.url.path
+        if method == "GET" and path == "/v1/networks":
+            return httpx.Response(
+                200,
+                json={"networks": [{"_id": "net-mock-1", "name": "companion-net"}]},
+            )
+        if method == "GET" and path == "/v1/me":
+            return httpx.Response(
+                200,
+                json={
+                    "plans": {
+                        "projectBundlePlans": {
+                            "free": {"free": {"available": True, "displayPrice": 0}}
+                        }
+                    }
+                },
+            )
         if method == "POST" and path == "/v1/projects":
             create_posts += 1
             raise httpx.ReadTimeout("slow", request=request)

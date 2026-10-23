@@ -6,24 +6,12 @@ const localWorkspaceSchema = z.object({
   displayName: z.string().min(1),
 });
 
-const workspaceStoreV2Schema = z.object({
-  version: z.literal(2),
-  activePath: z.string().min(1).nullable(),
-  recent: z.array(localWorkspaceSchema).max(12),
-});
-
 export type LocalWorkspace = z.infer<typeof localWorkspaceSchema>;
-export type WorkspaceStoreV2 = z.infer<typeof workspaceStoreV2Schema>;
-type StoragePort = Pick<Storage, "getItem" | "setItem" | "removeItem">;
-
-export const LOCAL_WORKSPACE_STORAGE_KEY = "liaraops-ai:local-workspace";
-const MAX_RECENT = 8;
 
 const ERR = {
-  unavailable: "فضای کار محلی در این مرورگر در دسترس نیست.",
-  unreadable: "فضای کار ذخیره‌شده قابل خواندن نبود؛ پاک شد تا بتوانید دوباره انتخاب کنید.",
+  unavailable: "فضای کار محلی از پایگاه‌داده در دسترس نیست.",
   saveValidation: "ذخیره فضای کار ممکن نشد (داده نامعتبر).",
-  saveStorage: "ذخیره فضای کار در این مرورگر ممکن نشد. فضای ذخیره‌سازی را بررسی کنید.",
+  saveStorage: "ذخیره فضای کار در پایگاه‌داده ممکن نشد.",
 } as const;
 
 /** Stable identity for a local folder path (trim + strip trailing separators). */
@@ -54,160 +42,133 @@ function sanitizeWorkspace(raw: LocalWorkspace): LocalWorkspace | null {
   };
 }
 
-function pushRecent(recent: LocalWorkspace[], next: LocalWorkspace): LocalWorkspace[] {
-  const key = normalizeWorkspaceKey(next.path);
-  const rest = recent.filter((item) => normalizeWorkspaceKey(item.path) !== key);
-  return [next, ...rest].slice(0, MAX_RECENT);
-}
-
-function readRawStore(storage: StoragePort): {
-  store: WorkspaceStoreV2 | null;
-  error: string | null;
+function parseFolderPayload(raw: unknown): {
+  workspace: LocalWorkspace | null;
+  recent: LocalWorkspace[];
 } {
-  let raw: string | null;
-  try {
-    raw = storage.getItem(LOCAL_WORKSPACE_STORAGE_KEY);
-  } catch {
-    return { store: null, error: ERR.unavailable };
+  if (typeof raw !== "object" || raw === null) {
+    return { workspace: null, recent: [] };
   }
-
-  if (raw === null) {
-    return { store: { version: 2, activePath: null, recent: [] }, error: null };
+  const recentRaw = Array.isArray((raw as { recent?: unknown }).recent)
+    ? (raw as { recent: unknown[] }).recent
+    : [];
+  const recent: LocalWorkspace[] = [];
+  for (const item of recentRaw) {
+    const parsed = localWorkspaceSchema.safeParse(item);
+    if (!parsed.success) continue;
+    const sanitized = sanitizeWorkspace(parsed.data);
+    if (sanitized) recent.push(sanitized);
   }
-
-  let decoded: unknown;
-  try {
-    decoded = JSON.parse(raw);
-  } catch {
-    try {
-      storage.removeItem(LOCAL_WORKSPACE_STORAGE_KEY);
-    } catch {
-      /* ignore */
-    }
-    return { store: null, error: ERR.unreadable };
-  }
-
-  const v2 = workspaceStoreV2Schema.safeParse(decoded);
-  if (v2.success) {
-    const recent = v2.data.recent
-      .map((item) => sanitizeWorkspace(item))
-      .filter((item): item is LocalWorkspace => item !== null);
-    let activePath = v2.data.activePath ? normalizeWorkspaceKey(v2.data.activePath) : null;
-    if (activePath && !recent.some((item) => item.path === activePath)) {
-      activePath = recent[0]?.path ?? null;
-    }
-    return { store: { version: 2, activePath, recent }, error: null };
-  }
-
-  // Legacy v1: single active workspace object.
-  const v1 = localWorkspaceSchema.safeParse(decoded);
-  if (v1.success) {
-    const workspace = sanitizeWorkspace(v1.data);
-    if (!workspace) {
-      try {
-        storage.removeItem(LOCAL_WORKSPACE_STORAGE_KEY);
-      } catch {
-        /* ignore */
-      }
-      return { store: null, error: ERR.unreadable };
-    }
-    return {
-      store: { version: 2, activePath: workspace.path, recent: [workspace] },
-      error: null,
-    };
-  }
-
-  try {
-    storage.removeItem(LOCAL_WORKSPACE_STORAGE_KEY);
-  } catch {
-    /* ignore */
-  }
-  return { store: null, error: ERR.unreadable };
+  const activeParsed = localWorkspaceSchema.safeParse(
+    (raw as { workspace?: unknown }).workspace,
+  );
+  const workspace = activeParsed.success
+    ? sanitizeWorkspace(activeParsed.data)
+    : null;
+  return { workspace, recent };
 }
 
-function writeStore(storage: StoragePort, store: WorkspaceStoreV2): string | null {
-  const recent = store.recent
-    .map((item) => sanitizeWorkspace(item))
-    .filter((item): item is LocalWorkspace => item !== null)
-    .slice(0, MAX_RECENT);
-  let activePath = store.activePath ? normalizeWorkspaceKey(store.activePath) : null;
-  if (activePath && !recent.some((item) => item.path === activePath)) {
-    activePath = recent[0]?.path ?? null;
+function formatDetail(body: unknown, status: number): string {
+  if (typeof body === "object" && body !== null && "detail" in body) {
+    const detail = (body as { detail: unknown }).detail;
+    if (typeof detail === "string") return detail;
   }
-  const payload: WorkspaceStoreV2 = { version: 2, activePath, recent };
-  const parsed = workspaceStoreV2Schema.safeParse(payload);
-  if (!parsed.success) return ERR.saveValidation;
-  try {
-    storage.setItem(LOCAL_WORKSPACE_STORAGE_KEY, JSON.stringify(parsed.data));
-    return null;
-  } catch {
-    return ERR.saveStorage;
-  }
+  return `درخواست ناموفق بود (کد ${status})`;
 }
 
-export function loadLocalWorkspace(storage: StoragePort): {
+async function apiRequest(path: string, init?: RequestInit): Promise<unknown> {
+  const response = await fetch(path, {
+    ...init,
+    headers: { "Content-Type": "application/json", ...init?.headers },
+  });
+  if (!response.ok) {
+    const body: unknown = await response.json().catch(() => ({}));
+    throw new Error(formatDetail(body, response.status));
+  }
+  if (response.status === 204) return null;
+  return response.json();
+}
+
+export async function loadLocalWorkspace(workspaceId: string): Promise<{
   workspace: LocalWorkspace | null;
   recent: LocalWorkspace[];
   error: string | null;
-} {
-  const { store, error } = readRawStore(storage);
-  if (!store) return { workspace: null, recent: [], error };
-  const workspace =
-    store.activePath != null
-      ? store.recent.find((item) => item.path === store.activePath) ?? null
-      : null;
-  return { workspace, recent: store.recent, error };
+}> {
+  try {
+    const raw = await apiRequest(
+      `/api/folders?workspace_id=${encodeURIComponent(workspaceId)}`,
+    );
+    const parsed = parseFolderPayload(raw);
+    return { ...parsed, error: null };
+  } catch {
+    return { workspace: null, recent: [], error: ERR.unavailable };
+  }
 }
 
-export function listRecentWorkspaces(storage: StoragePort): LocalWorkspace[] {
-  return loadLocalWorkspace(storage).recent;
+export async function listRecentWorkspaces(
+  workspaceId: string,
+): Promise<LocalWorkspace[]> {
+  return (await loadLocalWorkspace(workspaceId)).recent;
 }
 
-export function saveLocalWorkspace(
-  storage: StoragePort,
+export async function saveLocalWorkspace(
+  workspaceId: string,
   workspace: LocalWorkspace | null,
-): string | null {
+): Promise<{ workspace: LocalWorkspace | null; recent: LocalWorkspace[]; error: string | null }> {
   if (workspace === null) {
-    const { store } = readRawStore(storage);
-    if (!store) {
-      try {
-        storage.removeItem(LOCAL_WORKSPACE_STORAGE_KEY);
-        return null;
-      } catch {
-        return ERR.saveStorage;
-      }
+    try {
+      const raw = await apiRequest("/api/folders", {
+        method: "PUT",
+        body: JSON.stringify({
+          workspace_id: workspaceId,
+          clear_active: true,
+        }),
+      });
+      return { ...parseFolderPayload(raw), error: null };
+    } catch {
+      return { workspace: null, recent: [], error: ERR.saveStorage };
     }
-    return writeStore(storage, { version: 2, activePath: null, recent: store.recent });
   }
 
   const next = sanitizeWorkspace(workspace);
-  if (!next) return ERR.saveValidation;
+  if (!next) {
+    return { workspace: null, recent: [], error: ERR.saveValidation };
+  }
 
-  const { store, error } = readRawStore(storage);
-  if (error && !store) return error;
-  const base = store ?? { version: 2 as const, activePath: null, recent: [] as LocalWorkspace[] };
-  return writeStore(storage, {
-    version: 2,
-    activePath: next.path,
-    recent: pushRecent(base.recent, next),
-  });
+  try {
+    const raw = await apiRequest("/api/folders", {
+      method: "PUT",
+      body: JSON.stringify({
+        workspace_id: workspaceId,
+        path: next.path,
+        displayName: next.displayName,
+      }),
+    });
+    return { ...parseFolderPayload(raw), error: null };
+  } catch {
+    return { workspace: null, recent: [], error: ERR.saveStorage };
+  }
 }
 
 /** Switch active folder to an already-known recent path (no OS picker). */
-export function activateRecentWorkspace(
-  storage: StoragePort,
+export async function activateRecentWorkspace(
+  workspaceId: string,
   path: string,
-): { workspace: LocalWorkspace | null; error: string | null } {
+): Promise<{ workspace: LocalWorkspace | null; recent: LocalWorkspace[]; error: string | null }> {
   const key = normalizeWorkspaceKey(path);
-  const { store, error } = readRawStore(storage);
-  if (!store) return { workspace: null, error: error ?? ERR.unreadable };
-  const found = store.recent.find((item) => item.path === key);
-  if (!found) return { workspace: null, error: ERR.saveValidation };
-  const saveError = writeStore(storage, {
-    version: 2,
-    activePath: found.path,
-    recent: pushRecent(store.recent, found),
-  });
-  if (saveError) return { workspace: null, error: saveError };
-  return { workspace: found, error: null };
+  if (!key) {
+    return { workspace: null, recent: [], error: ERR.saveValidation };
+  }
+  try {
+    const raw = await apiRequest("/api/folders/activate", {
+      method: "POST",
+      body: JSON.stringify({
+        workspace_id: workspaceId,
+        path: key,
+      }),
+    });
+    return { ...parseFolderPayload(raw), error: null };
+  } catch {
+    return { workspace: null, recent: [], error: ERR.saveStorage };
+  }
 }

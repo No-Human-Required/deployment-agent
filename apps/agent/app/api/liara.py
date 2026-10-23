@@ -37,6 +37,24 @@ def _format_plan_hint(plan: dict[str, Any]) -> str | None:
     return " · ".join(parts) if parts else None
 
 
+def _plan_monthly_tomans(plan: dict[str, Any]) -> float | None:
+    """Monthly price in Tomans — prefer displayPrice, else hourly × 720 (CLI)."""
+    display = plan.get("displayPrice")
+    if isinstance(display, (int, float)):
+        return float(display)
+    hourly = plan.get("price")
+    if isinstance(hourly, (int, float)):
+        return float(hourly) * 720.0
+    return None
+
+
+def _plan_ram_gb(plan: dict[str, Any]) -> float:
+    ram = plan.get("RAM") if isinstance(plan.get("RAM"), dict) else None
+    if ram and isinstance(ram.get("amount"), (int, float)):
+        return float(ram["amount"])
+    return 0.0
+
+
 def _public_project_plans(me: dict[str, Any]) -> list[dict[str, object]]:
     """Extract PaaS planIDs from GET /v1/me (same filter as Liara CLI)."""
     plans_root = me.get("plans") if isinstance(me.get("plans"), dict) else {}
@@ -56,6 +74,8 @@ def _public_project_plans(me: dict[str, Any]) -> list[dict[str, object]]:
             and (not region or region == "iran")
         ):
             continue
+        monthly = _plan_monthly_tomans(raw)
+        ram_gb = _plan_ram_gb(raw)
         out.append(
             {
                 "id": plan_id,
@@ -63,9 +83,22 @@ def _public_project_plans(me: dict[str, Any]) -> list[dict[str, object]]:
                 "hint": _format_plan_hint(raw),
                 "available": available,
                 "region": region or None,
+                "price_monthly": monthly,
+                "ram_gb": ram_gb,
+                "tier": None,  # filled after sort
             }
         )
-    out.sort(key=lambda row: (0 if row["id"] == "free" else 1, str(row["id"])))
+    # Weak → strong: free first, then monthly price, then RAM.
+    out.sort(
+        key=lambda row: (
+            0 if row["id"] == "free" else 1,
+            float(row.get("price_monthly") or 0),
+            float(row.get("ram_gb") or 0),
+            str(row["id"]),
+        )
+    )
+    for index, row in enumerate(out):
+        row["tier"] = index + 1
     return out
 
 

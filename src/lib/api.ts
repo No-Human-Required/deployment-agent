@@ -36,6 +36,7 @@ import {
   type SettingsView,
 } from "./schemas";
 import { assessReadinessPayload } from "./quietChat";
+import { sortPlansWeakToStrong } from "./sortPlans";
 
 export type Service = z.infer<typeof serviceSchema>;
 
@@ -148,7 +149,30 @@ export async function getServices(workspaceId?: string): Promise<Service[]> {
 export async function getLiaraPlans(workspaceId?: string): Promise<LiaraPlan[]> {
   const query = workspaceId ? `?workspace_id=${encodeURIComponent(workspaceId)}` : "";
   const raw = await request(`/api/liara/plans${query}`);
-  return liaraPlansResultSchema.parse(raw).plans;
+  // Always re-sort client-side so GenUI order is weak → strong even if cache/order drifts.
+  return sortPlansWeakToStrong(liaraPlansResultSchema.parse(raw).plans);
+}
+
+export type AccountBalances = {
+  liara: {
+    configured: boolean;
+    balance: number | null;
+    currency: string;
+    team_name?: string | null;
+    error: string | null;
+  };
+  aval: {
+    configured: boolean;
+    remaining_irt: number | null;
+    currency: string;
+    error: string | null;
+  };
+};
+
+/** Liara wallet + Aval credit for Settings header (`GET /api/settings/balances`). */
+export async function getAccountBalances(workspaceId?: string): Promise<AccountBalances> {
+  const query = workspaceId ? `?workspace_id=${encodeURIComponent(workspaceId)}` : "";
+  return (await request(`/api/settings/balances${query}`)) as AccountBalances;
 }
 
 /** Domains for a Liara project (`GET /api/liara/domains`) — read-only; attach via HITL chat. */

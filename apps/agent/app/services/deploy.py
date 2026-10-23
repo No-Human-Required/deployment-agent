@@ -34,10 +34,14 @@ DEPLOY_REGISTRY_TOOLS = ("create_project", "sources_releases")
 
 
 def live_writes_allowed() -> bool:
-    """Live Liara writes require token presence AND explicit env gate."""
-    token = (os.environ.get("LIARA_API_TOKEN") or "").strip()
+    """Explicit env gate for live Liara writes.
+
+    Credentials come from workspace secrets (preferred) or ``LIARA_API_TOKEN``.
+    Requiring the env token here blocked real deploys when the token was only
+    stored in the companion secrets store.
+    """
     flag = (os.environ.get("LIARA_ALLOW_LIVE_WRITES") or "").strip()
-    return bool(token) and flag == "1"
+    return flag == "1"
 
 
 def request_body_fingerprint(body: dict[str, Any]) -> str:
@@ -97,10 +101,22 @@ def build_node_next_plan(
     port: int = 3000,
     archive_path: str,
     summary: str | None = None,
+    network: str | None = None,
+    bundle_plan_id: str | None = None,
 ) -> dict[str, Any]:
     """Concrete first-publish steps for Node/Next (schema-ready dict)."""
     # Disposable demo prefix when callers forget — still allow exact names in tests.
     name = project_name
+    create_params: dict[str, Any] = {
+        "name": name,
+        "planID": plan_id,
+        "platform": platform,
+        "readOnlyRootFilesystem": True,
+    }
+    if network:
+        create_params["network"] = network
+    if bundle_plan_id:
+        create_params["bundlePlanID"] = bundle_plan_id
     return {
         "version": 1,
         "target_platform": "next" if platform in ("next", "nextjs") else "nodejs",
@@ -111,12 +127,7 @@ def build_node_next_plan(
                 "tool_id": "create_project",
                 "effects": ["create_paas_app"],
                 "cost_known": False,
-                "params": {
-                    "name": name,
-                    "planID": plan_id,
-                    "platform": platform,
-                    "readOnlyRootFilesystem": True,
-                },
+                "params": create_params,
             },
             {
                 "id": "upload-source",
@@ -156,13 +167,17 @@ def _step_payload(
     params = dict(step.params or {})
     tool = step.tool_id or ""
     if tool == "create_project":
-        return {
+        out: dict[str, Any] = {
             "name": params.get("name"),
             "planID": params.get("planID") or params.get("plan_id", "free"),
             "platform": params.get("platform", "node"),
             "readOnlyRootFilesystem": params.get("readOnlyRootFilesystem", True),
             "network": params.get("network"),
         }
+        bundle = params.get("bundlePlanID") or params.get("bundle_plan_id")
+        if bundle is not None:
+            out["bundlePlanID"] = bundle
+        return out
     if tool == "sources":
         return {
             "project_name": params.get("project_name")

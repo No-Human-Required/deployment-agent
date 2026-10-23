@@ -305,6 +305,78 @@ class LiaraClient:
             return data
         return None
 
+    def list_networks(self) -> list[dict[str, Any]]:
+        """GET /v1/networks — private networks required for create-app."""
+        response = self.request("GET", "/v1/networks")
+        data = response.json()
+        if isinstance(data, dict):
+            networks = data.get("networks") or []
+            if isinstance(networks, list):
+                return [n for n in networks if isinstance(n, dict)]
+        if isinstance(data, list):
+            return [n for n in data if isinstance(n, dict)]
+        raise LiaraHttpError("Unexpected /v1/networks response shape")
+
+    def create_network(self, *, network_name: str) -> dict[str, Any]:
+        """POST /v1/networks — body uses networkName (liara-cli)."""
+        response = self.request(
+            "POST", "/v1/networks", json={"networkName": network_name}
+        )
+        if not response.content:
+            return {"networkName": network_name, "status_code": response.status_code}
+        try:
+            data = response.json()
+        except ValueError:
+            return {"networkName": network_name, "status_code": response.status_code}
+        if isinstance(data, dict):
+            network = data.get("network")
+            if isinstance(network, dict):
+                return network
+            return data
+        return {"networkName": network_name, "raw": data}
+
+    def ensure_network(self, *, preferred_name: str = "companion-net") -> str:
+        """Return an existing network _id, or create ``preferred_name``."""
+        networks = self.list_networks()
+        for row in networks:
+            net_id = row.get("_id") or row.get("id")
+            if net_id:
+                return str(net_id)
+        created = self.create_network(network_name=preferred_name)
+        net_id = created.get("_id") or created.get("id")
+        if not net_id:
+            raise LiaraHttpError("network create succeeded but no _id returned")
+        return str(net_id)
+
+    @staticmethod
+    def pick_bundle_plan_id(me: dict[str, Any], plan_id: str) -> str:
+        """Cheapest available feature bundle for ``plan_id`` from GET /v1/me."""
+        plans = me.get("plans") if isinstance(me.get("plans"), dict) else {}
+        bundles_root = (
+            plans.get("projectBundlePlans")
+            if isinstance(plans.get("projectBundlePlans"), dict)
+            else {}
+        )
+        details = bundles_root.get(plan_id)
+        if not isinstance(details, dict):
+            # Free / legacy accounts often only accept matching free bundle.
+            return "free" if plan_id == "free" else "basic"
+        available: list[tuple[str, float]] = []
+        for key, raw in details.items():
+            if not isinstance(raw, dict) or not raw.get("available"):
+                continue
+            price = raw.get("displayPrice")
+            if price is None:
+                price = raw.get("price") or 0
+            try:
+                available.append((str(key), float(price)))
+            except (TypeError, ValueError):
+                available.append((str(key), 0.0))
+        if not available:
+            return "free" if plan_id == "free" else "basic"
+        available.sort(key=lambda row: (row[1], row[0]))
+        return available[0][0]
+
     def create_project(
         self,
         *,
@@ -313,16 +385,22 @@ class LiaraClient:
         platform: str,
         read_only_root_filesystem: bool = True,
         network: str | None = None,
+        bundle_plan_id: str | None = None,
     ) -> dict[str, Any]:
-        """POST /v1/projects — create app (developers.liara.ir create-a-app)."""
+        """POST /v1/projects — create app (network + bundlePlanID required live)."""
+        net_id = network or self.ensure_network()
+        bundle = bundle_plan_id
+        if not bundle:
+            me = self.get_me()
+            bundle = self.pick_bundle_plan_id(me, plan_id)
         body: dict[str, Any] = {
             "name": name,
             "planID": plan_id,
             "platform": platform,
             "readOnlyRootFilesystem": read_only_root_filesystem,
+            "network": net_id,
+            "bundlePlanID": bundle,
         }
-        if network:
-            body["network"] = network
         response = self.request("POST", "/v1/projects", json=body)
         # Docs: 200 may have empty body; treat name as provider id.
         if not response.content:
@@ -693,10 +771,16 @@ def _public_me_summary(me: dict[str, Any]) -> dict[str, Any]:
     """Strip potentially sensitive nested fields from /v1/me for API responses."""
     user = me.get("user") if isinstance(me.get("user"), dict) else {}
     account = me.get("account") if isinstance(me.get("account"), dict) else {}
+    team = me.get("team") if isinstance(me.get("team"), dict) else {}
+    balance = team.get("balance")
+    if balance is None:
+        balance = account.get("balance")
     return {
         "has_user": bool(user or account or me),
         "email": user.get("email") or account.get("email") or me.get("email"),
         "name": user.get("name") or account.get("name") or me.get("name"),
+        "team_name": team.get("teamName") or team.get("name"),
+        "balance": float(balance) if isinstance(balance, (int, float)) else None,
         "keys": sorted(k for k in me.keys() if k != "token"),
     }
 

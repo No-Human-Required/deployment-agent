@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.conversations import router as conversations_router
 from app.api.liara import router as liara_router
 from app.api.local_fs import router as local_fs_router
 from app.api.maintain import router as maintain_router
@@ -41,6 +42,7 @@ app.add_middleware(
 )
 
 app.include_router(settings_router)
+app.include_router(conversations_router)
 app.include_router(liara_router)
 app.include_router(local_fs_router)
 app.include_router(orchestrator_router)

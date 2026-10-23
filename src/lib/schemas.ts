@@ -278,7 +278,7 @@ export const knownViewPayloadSchema = z.discriminatedUnion("type", [
     type: z.literal("service_health"),
     data: z.object({ status: z.string(), uptime: z.string(), mode: z.string() }),
   }),
-  /** In-chat GenUI intake before createPlan (service / plan / domain). */
+  /** In-chat GenUI intake before createPlan (service / plan / platform / domain). */
   z.object({
     type: z.literal("intake"),
     data: z.object({
@@ -300,11 +300,28 @@ export const knownViewPayloadSchema = z.discriminatedUnion("type", [
             id: z.string().min(1),
             label: z.string().min(1),
             hint: z.string().nullable().optional(),
+            price_monthly: z.number().nullable().optional(),
+            ram_gb: z.number().nullable().optional(),
+            tier: z.number().int().positive().optional(),
+          }),
+        )
+        .default([]),
+      platforms: z
+        .array(
+          z.object({
+            id: z.string().min(1),
+            label: z.string().min(1),
+            hint: z.string().nullable().optional(),
+            icon: z.string().nullable().optional(),
           }),
         )
         .default([]),
       require_plan: z.boolean().default(false),
       require_domain: z.boolean().default(false),
+      require_platform: z.boolean().default(false),
+      suggested_platform: z.string().nullable().optional(),
+      suggested_service_name: z.string().nullable().optional(),
+      prefer_new_service: z.boolean().default(false),
       load_error: z.string().nullable().optional(),
       settings_cta: z.boolean().default(false),
     }),
@@ -400,6 +417,9 @@ export const liaraPlanSchema = z.object({
   hint: z.string().nullable().optional(),
   available: z.boolean().optional(),
   region: z.string().nullable().optional(),
+  price_monthly: z.number().nullable().optional(),
+  ram_gb: z.number().nullable().optional(),
+  tier: z.number().int().positive().optional(),
 });
 
 export const liaraPlansResultSchema = z.object({
@@ -484,6 +504,7 @@ export const readinessAssessmentSchema = z.object({
   open_needs: z.array(z.string()).default([]),
   notes: z.string().nullable().optional(),
   platform: z.string().nullable().optional(),
+  package_name: z.string().nullable().optional(),
   findings: z.array(findingPayloadSchema).default([]),
   detected_port: z.number().nullable().optional(),
   start_script: z.string().nullable().optional(),
@@ -567,11 +588,28 @@ export const orchestratorIntakeSchema = z.object({
         id: z.string().min(1),
         label: z.string().min(1),
         hint: z.string().nullable().optional(),
+        price_monthly: z.number().nullable().optional(),
+        ram_gb: z.number().nullable().optional(),
+        tier: z.number().int().positive().optional(),
+      }),
+    )
+    .default([]),
+  platforms: z
+    .array(
+      z.object({
+        id: z.string().min(1),
+        label: z.string().min(1),
+        hint: z.string().nullable().optional(),
+        icon: z.string().nullable().optional(),
       }),
     )
     .default([]),
   require_plan: z.boolean().default(false),
   require_domain: z.boolean().default(false),
+  require_platform: z.boolean().default(false),
+  suggested_platform: z.string().nullable().optional(),
+  suggested_service_name: z.string().nullable().optional(),
+  prefer_new_service: z.boolean().default(false),
   load_error: z.string().nullable().optional(),
 });
 

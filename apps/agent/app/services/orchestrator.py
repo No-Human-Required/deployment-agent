@@ -177,10 +177,13 @@ class OrchestratorService:
         self._chat_model = chat_model
 
     def _writes_enabled(self) -> bool:
-        """HTTP writes only when explicit live gate is on, or a client was injected (tests)."""
+        """HTTP writes when the live gate is on, or a client was injected (tests).
+
+        Token may live in workspace secrets — do not require ``LIARA_API_TOKEN`` env.
+        """
         if self._liara_client is not None:
             return True
-        return bool(self._settings.liara_allow_live_writes) and live_writes_allowed()
+        return bool(self._settings.liara_allow_live_writes) or live_writes_allowed()
 
     def resolve_liara_client(self, workspace_id: uuid.UUID) -> LiaraClient | None:
         if self._liara_client is not None:
@@ -259,6 +262,7 @@ class OrchestratorService:
         open_needs: list[str] = []
         findings: list[FindingPayload] = []
         platform: str | None = None
+        package_name: str | None = None
         detected_port: int | None = None
         start_script: str | None = None
 
@@ -278,6 +282,7 @@ class OrchestratorService:
         if path:
             result = assess_node_next(path)
             platform = result.platform
+            package_name = result.package_name
             detected_port = result.detected_port
             start_script = result.start_script
             findings = [
@@ -302,6 +307,7 @@ class OrchestratorService:
             open_needs=open_needs,
             notes="; ".join(notes_parts),
             platform=platform,
+            package_name=package_name,
             findings=findings,
             detected_port=detected_port,
             start_script=start_script,
@@ -422,6 +428,22 @@ class OrchestratorService:
                 platform=platform,
                 port=int(deploy_cfg.get("port") or 3000),
                 archive_path=str(deploy_cfg["archive_path"]),
+                network=(
+                    str(deploy_cfg["network"])
+                    if deploy_cfg.get("network") is not None
+                    else None
+                ),
+                bundle_plan_id=(
+                    str(
+                        deploy_cfg.get("bundle_plan_id")
+                        or deploy_cfg.get("bundlePlanID")
+                    )
+                    if (
+                        deploy_cfg.get("bundle_plan_id") is not None
+                        or deploy_cfg.get("bundlePlanID") is not None
+                    )
+                    else None
+                ),
                 summary=f"اولین انتشار برای: {case.goal[:200]}",
             )
 

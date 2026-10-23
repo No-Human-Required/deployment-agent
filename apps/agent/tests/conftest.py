@@ -1,13 +1,19 @@
-"""Shared fixtures — Postgres via DATABASE_URL, isolated transactions."""
+"""Shared fixtures — isolated test Postgres only (never the live companion DB).
+
+Pytest must not share ``liara_companion`` with the running agent. Historical
+``drop_all`` on ``DATABASE_URL`` wiped Settings secrets and conversations.
+"""
 
 from __future__ import annotations
 
 import os
 import uuid
+from urllib.parse import urlparse, urlunparse
 
 import pytest
 from cryptography.fernet import Fernet
 from sqlalchemy import create_engine, text
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import Settings
@@ -17,6 +23,7 @@ from app.models import (  # noqa: F401
     AuditEvent,
     Capability,
     Case,
+    ConversationThread,
     Incident,
     Monitor,
     Operation,
@@ -24,6 +31,7 @@ from app.models import (  # noqa: F401
     RecoveryBaseline,
     SecretRef,
     Workspace,
+    WorkspaceFolder,
     WorkspaceMember,
     WorkspaceSettings,
 )
@@ -31,13 +39,99 @@ from app.models import (  # noqa: F401
 # Ensure models are registered on metadata before create_all
 import app.models  # noqa: F401, E402
 
+# Live / seeded companion DBs — refuse any destructive schema ops on these.
+_PROTECTED_DB_NAMES = frozenset(
+    {
+        "liara_companion",
+        "postgres",
+        "template0",
+        "template1",
+    }
+)
+
+_DEFAULT_TEST_DATABASE_URL = (
+    "postgresql://liara:liara@localhost:5433/liara_companion_test"
+)
+
+
+def pytest_sessionstart(session: pytest.Session) -> None:
+    """Fail fast if env points pytest at the live companion database."""
+    _ = session
+    for key in ("TEST_DATABASE_URL", "PYTEST_DATABASE_URL"):
+        raw = (os.environ.get(key) or "").strip()
+        if raw:
+            _assert_safe_test_database(raw)
+            return
+    # Default target must also be safe (guards against editing the default badly).
+    _assert_safe_test_database(_DEFAULT_TEST_DATABASE_URL)
+
+
+def _database_name(url: str) -> str:
+    path = urlparse(url).path.lstrip("/")
+    return path.split("?")[0] if path else ""
+
+
+def _assert_safe_test_database(url: str) -> str:
+    name = _database_name(url)
+    if not name:
+        raise RuntimeError(f"test DATABASE URL has no database name: {url!r}")
+    if name in _PROTECTED_DB_NAMES:
+        raise RuntimeError(
+            f"Refusing to run pytest against protected database {name!r}. "
+            f"Use TEST_DATABASE_URL (default: liara_companion_test), "
+            f"not DATABASE_URL / liara_companion."
+        )
+    if not name.endswith("_test") and os.environ.get("ALLOW_NON_TEST_DB") != "1":
+        raise RuntimeError(
+            f"Refusing database {name!r}: test DB name must end with '_test' "
+            f"(or set ALLOW_NON_TEST_DB=1 for an intentional exception)."
+        )
+    return name
+
+
+def _admin_url(url: str) -> str:
+    """Same host/user, database ``postgres`` — for CREATE DATABASE."""
+    parsed = urlparse(url)
+    return urlunparse(parsed._replace(path="/postgres"))
+
+
+def _ensure_database_exists(url: str) -> None:
+    name = _assert_safe_test_database(url)
+    admin = create_engine(_admin_url(url), isolation_level="AUTOCOMMIT", pool_pre_ping=True)
+    try:
+        with admin.connect() as conn:
+            exists = conn.execute(
+                text("SELECT 1 FROM pg_database WHERE datname = :name"),
+                {"name": name},
+            ).scalar()
+            if not exists:
+                # Identifier only — name already validated against allowlist rules.
+                conn.execute(text(f'CREATE DATABASE "{name}"'))
+    finally:
+        admin.dispose()
+
 
 @pytest.fixture(scope="session")
 def database_url() -> str:
-    return os.environ.get(
-        "DATABASE_URL",
-        "postgresql://liara:liara@localhost:5433/liara_companion",
-    )
+    """Always the isolated test DB — never fall back to live ``DATABASE_URL``."""
+    raw = (
+        os.environ.get("TEST_DATABASE_URL")
+        or os.environ.get("PYTEST_DATABASE_URL")
+        or _DEFAULT_TEST_DATABASE_URL
+    ).strip()
+    # If someone exports DATABASE_URL into the shell and mistakenly sets
+    # TEST_DATABASE_URL to the same value, the guard below still blocks.
+    if not os.environ.get("TEST_DATABASE_URL") and not os.environ.get(
+        "PYTEST_DATABASE_URL"
+    ):
+        live = (os.environ.get("DATABASE_URL") or "").strip()
+        if live and _database_name(live) == _database_name(raw):
+            raise RuntimeError(
+                "DATABASE_URL points at the same DB pytest would use; "
+                "set TEST_DATABASE_URL to a dedicated *_test database."
+            )
+    _assert_safe_test_database(raw)
+    return raw
 
 
 @pytest.fixture(scope="session")
@@ -46,29 +140,18 @@ def master_key() -> str:
 
 
 @pytest.fixture(scope="session")
-def engine(database_url: str):
+def engine(database_url: str) -> Engine:
+    _assert_safe_test_database(database_url)
+    _ensure_database_exists(database_url)
     eng = create_engine(database_url, pool_pre_ping=True)
-    # Connectivity check early — fail tests clearly if Postgres is down.
     with eng.connect() as conn:
         conn.execute(text("SELECT 1"))
+    # Destructive reset is allowed only on the isolated *_test database.
     Base.metadata.drop_all(eng)
     Base.metadata.create_all(eng)
     yield eng
     Base.metadata.drop_all(eng)
     eng.dispose()
-    # Restore Alembic schema so local migrate/seed still work after pytest.
-    # (drop_all leaves alembic_version pointing at head with no tables.)
-    _restore_alembic_schema(database_url)
-
-
-def _restore_alembic_schema(database_url: str) -> None:
-    from alembic import command
-    from alembic.config import Config
-
-    cfg = Config("alembic.ini")
-    cfg.set_main_option("sqlalchemy.url", database_url)
-    command.stamp(cfg, "base")
-    command.upgrade(cfg, "head")
 
 
 @pytest.fixture
@@ -88,7 +171,7 @@ def settings(database_url: str, master_key: str) -> Settings:
 
 
 @pytest.fixture
-def db_session(engine) -> Session:
+def db_session(engine: Engine) -> Session:
     connection = engine.connect()
     transaction = connection.begin()
     SessionLocal = sessionmaker(bind=connection, autoflush=False, autocommit=False)

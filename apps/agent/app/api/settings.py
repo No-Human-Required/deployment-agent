@@ -122,3 +122,104 @@ def prove_llm(
         "api_key_label": cfg.api_key_label,
         "message": "اتصال Aval AI برقرار است.",
     }
+
+
+@router.get("/balances")
+def get_balances(
+    db: Annotated[Session, Depends(get_db)],
+    app_settings: Annotated[Settings, Depends(get_app_settings)],
+    workspace_id: Annotated[uuid.UUID | None, Query()] = None,
+) -> dict[str, object]:
+    """Read-only wallet/credit snapshots for Settings (no secret echo)."""
+    from app.services.liara_client import LiaraClient, LiaraClientError
+
+    settings_svc = SettingsService(db, app_settings)
+    out: dict[str, object] = {
+        "liara": {"configured": False, "balance": None, "currency": "IRT", "error": None},
+        "aval": {"configured": False, "remaining_irt": None, "currency": "IRT", "error": None},
+    }
+
+    try:
+        token, base_url, team_id = settings_svc.resolve_liara_credentials(workspace_id)
+        client = LiaraClient(
+            token,
+            base_url=base_url,
+            team_id=team_id,
+            timeout=app_settings.liara_http_timeout_seconds,
+        )
+        me = client.get_me()
+        team = me.get("team") if isinstance(me.get("team"), dict) else {}
+        balance = team.get("balance")
+        out["liara"] = {
+            "configured": True,
+            "balance": float(balance) if isinstance(balance, (int, float)) else None,
+            "currency": "IRT",
+            "team_name": team.get("teamName") or team.get("name"),
+            "error": None,
+        }
+    except LookupError:
+        out["liara"] = {
+            "configured": False,
+            "balance": None,
+            "currency": "IRT",
+            "error": "token_missing",
+        }
+    except LiaraClientError as exc:
+        out["liara"] = {
+            "configured": True,
+            "balance": None,
+            "currency": "IRT",
+            "error": exc.code,
+        }
+
+    llm = LlmService(db, app_settings)
+    cfg = llm.resolve_config(workspace_id)
+    if cfg is None:
+        out["aval"] = {
+            "configured": False,
+            "remaining_irt": None,
+            "currency": "IRT",
+            "error": "key_missing",
+        }
+        return out
+
+    credit_url = "https://api.avalai.ir/user/v1/credit"
+    try:
+        with httpx.Client(timeout=20.0) as client:
+            response = client.get(
+                credit_url,
+                headers={"Authorization": f"Bearer {cfg.api_key}"},
+            )
+        if response.status_code in {401, 403}:
+            out["aval"] = {
+                "configured": True,
+                "remaining_irt": None,
+                "currency": "IRT",
+                "error": "unauthorized",
+            }
+        elif response.status_code >= 400:
+            out["aval"] = {
+                "configured": True,
+                "remaining_irt": None,
+                "currency": "IRT",
+                "error": f"http_{response.status_code}",
+            }
+        else:
+            data = response.json() if response.content else {}
+            remaining = data.get("remaining_irt") if isinstance(data, dict) else None
+            out["aval"] = {
+                "configured": True,
+                "remaining_irt": (
+                    float(remaining) if isinstance(remaining, (int, float)) else None
+                ),
+                "currency": "IRT",
+                "error": None,
+            }
+    except httpx.HTTPError as exc:
+        out["aval"] = {
+            "configured": True,
+            "remaining_irt": None,
+            "currency": "IRT",
+            "error": exc.__class__.__name__,
+        }
+    return out

@@ -3,20 +3,26 @@ import {
   Activity,
   ArrowUp,
   Bot,
+  Bug,
   ChevronDown,
   CircleHelp,
+  ClipboardList,
   Code2,
+  ExternalLink,
+  FilePlus2,
   FolderOpen,
   FolderPlus,
   Menu,
   MessageSquare,
   MoreHorizontal,
+  Pencil,
   Plus,
-  Search,
+  Rocket,
   Server,
   Settings2,
   ShieldCheck,
   Sparkles,
+  Trash2,
   X,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
@@ -24,6 +30,7 @@ import { IntakePanel } from "./components/IntakePanel";
 import { NavigationView, type NavSurface } from "./components/nav/NavigationView";
 import { PlanApprovalPanel } from "./components/PlanApprovalPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
+import { SidebarWalletBalances } from "./components/SidebarWalletBalances";
 import type { IntakeConfirmValues } from "./components/agent-ui/GenerativeCard";
 import {
   approvePlan,
@@ -44,6 +51,7 @@ import {
   type Service,
 } from "./lib/api";
 import { resolveChallengeLoopRoute } from "./lib/challengeLoops";
+import { composerSkills } from "./lib/composerSkills";
 import {
   findConversationInHistory,
   loadAllConversationHistory,
@@ -57,6 +65,13 @@ import {
   intakeRequirements,
   type IntakeKind,
 } from "./lib/intake";
+import { liaraServiceConsoleUrl } from "./lib/liaraLinks";
+import {
+  enrichPlatformOptions,
+  LIARA_PLATFORMS,
+  suggestLiaraPlatform,
+  suggestServiceNameFromPackage,
+} from "./lib/liaraPlatforms";
 import {
   navigateAppRoute,
   parseAppRoute,
@@ -67,11 +82,25 @@ import {
   planReadyAssistantText,
   verificationAssistantText,
 } from "./lib/quietChat";
+import {
+  diagnosisFollowUpReplies,
+  fixOptionReplies,
+  generativeAwaitingUser,
+  intakeServiceReplies,
+  settingsReply,
+  verifiedFollowUpReplies,
+  whatNextReplies,
+  type QuickReply,
+} from "./lib/quickReplies";
 import { buildRequestTimeline } from "./lib/requestTimeline";
+import {
+  loadUiPreferences,
+  patchUiPreferences,
+  type UiPreferences,
+} from "./lib/uiPreferences";
 import {
   activateRecentWorkspace,
   folderDisplayName,
-  listRecentWorkspaces,
   loadLocalWorkspace,
   normalizeWorkspaceKey,
   saveLocalWorkspace,
@@ -79,8 +108,16 @@ import {
 } from "./lib/workspace";
 
 type NavItem = NavSurface;
-type ChatMessage = { id: string; role: "user" | "assistant"; text: string; kind?: "demo" | "live" };
+type ChatMessage = {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  kind?: "demo" | "live";
+  quickReplies?: QuickReply[];
+};
 type CatalogState = "idle" | "loading" | "ready" | "error";
+type ContextService = { id: string; name: string };
+type AttachPanel = "menu" | "services";
 
 const copy = {
   en: {
@@ -105,6 +142,13 @@ const copy = {
     settings: "Settings",
     thinking: "Driving orchestrator case…",
     noServices: "No services",
+    noContextService: "No service in context",
+    attachMenu: "Add context",
+    attachSkills: "Skills",
+    attachFile: "Attach file",
+    attachService: "Liara service",
+    attachBack: "Back",
+    pickingFile: "Opening file picker…",
     noFolder: "No project folder",
     pickFolderHint: "Choose a local folder to start project chat",
     pickFolderCta: "Open project folder",
@@ -115,6 +159,17 @@ const copy = {
     folderGateError: "Select a local project folder before starting a project chat.",
     collapseFolder: "Collapse folder",
     expandFolder: "Expand folder",
+    chatOptions: "Conversation options",
+    renameChat: "Rename title",
+    deleteChat: "Delete conversation",
+    renameTitleHeading: "Rename conversation",
+    renameTitleBody: "Choose a short title that stays visible in the sidebar.",
+    renameTitleSave: "Save title",
+    deleteConfirmHeading: "Delete this conversation?",
+    deleteConfirmBody: "This permanently removes the chat and its history from the workspace database. This cannot be undone.",
+    deleteConfirmAction: "Delete conversation",
+    cancel: "Cancel",
+    titlePlaceholder: "Conversation title",
   },
   fa: {
     workspace: "فضای کار عامل",
@@ -138,6 +193,13 @@ const copy = {
     settings: "تنظیمات",
     thinking: "در حال آماده‌سازی پاسخ…",
     noServices: "بدون سرویس",
+    noContextService: "سرویسی در زمینه نیست",
+    attachMenu: "افزودن زمینه",
+    attachSkills: "مهارت‌ها",
+    attachFile: "انتخاب فایل",
+    attachService: "سرویس لیارا",
+    attachBack: "بازگشت",
+    pickingFile: "در حال انتخاب فایل…",
     noFolder: "بدون پوشه پروژه",
     pickFolderHint: "برای شروع گفتگوی پروژه یک پوشه محلی انتخاب کنید",
     pickFolderCta: "انتخاب پوشه پروژه",
@@ -148,6 +210,17 @@ const copy = {
     folderGateError: "قبل از شروع گفتگوی پروژه، یک پوشه محلی انتخاب کنید.",
     collapseFolder: "بستن پوشه",
     expandFolder: "باز کردن پوشه",
+    chatOptions: "گزینه‌های گفتگو",
+    renameChat: "تغییر عنوان",
+    deleteChat: "پاک کردن گفتگو",
+    renameTitleHeading: "تغییر عنوان گفتگو",
+    renameTitleBody: "عنوان کوتاهی انتخاب کنید که در سایدبار دیده شود.",
+    renameTitleSave: "ذخیره عنوان",
+    deleteConfirmHeading: "این گفتگو پاک شود؟",
+    deleteConfirmBody: "گفتگو و تاریخچه‌اش برای همیشه از پایگاه‌داده فضای کار حذف می‌شود و قابل بازگشت نیست.",
+    deleteConfirmAction: "پاک کردن گفتگو",
+    cancel: "انصراف",
+    titlePlaceholder: "عنوان گفتگو",
   },
 };
 
@@ -163,58 +236,37 @@ function id() {
 }
 
 function App() {
-  const [initialWorkspace] = useState(() => {
-    try {
-      return loadLocalWorkspace(window.localStorage);
-    } catch {
-      return {
-        workspace: null as LocalWorkspace | null,
-        recent: [] as LocalWorkspace[],
-        error: "فضای کار محلی در این مرورگر در دسترس نیست.",
-      };
-    }
-  });
-  const [localWorkspace, setLocalWorkspace] = useState<LocalWorkspace | null>(initialWorkspace.workspace);
-  const [recentWorkspaces, setRecentWorkspaces] = useState<LocalWorkspace[]>(initialWorkspace.recent ?? []);
+  const [localWorkspace, setLocalWorkspace] = useState<LocalWorkspace | null>(null);
+  const [recentWorkspaces, setRecentWorkspaces] = useState<LocalWorkspace[]>([]);
   const workspaceKey = localWorkspace ? normalizeWorkspaceKey(localWorkspace.path) : null;
   const hasLocalWorkspace = Boolean(workspaceKey);
-  const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>(() => {
-    const key = initialWorkspace.workspace
-      ? normalizeWorkspaceKey(initialWorkspace.workspace.path)
-      : "";
-    return key ? { [key]: true } : {};
-  });
-
-  const [initialHistory] = useState(() => {
-    try {
-      return loadConversationHistory(window.localStorage, workspaceKey);
-    } catch {
-      return {
-        conversations: [] as Conversation[],
-        error: "تاریخچه گفتگو در این مرورگر در دسترس نیست. جلسه فعلی همچنان کار می‌کند.",
-      };
-    }
-  });
-  const historyCanBeSaved = initialHistory.error === null;
+  const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({});
+  const [historyCanBeSaved, setHistoryCanBeSaved] = useState(false);
+  const [folderHistoryByKey, setFolderHistoryByKey] = useState<Record<string, Conversation[]>>({});
   const [services, setServices] = useState<Service[]>([]);
   const [servicesState, setServicesState] = useState<CatalogState>("idle");
   const [servicesError, setServicesError] = useState("");
-  const [selectedServiceId, setSelectedServiceId] = useState("");
+  const [contextServices, setContextServices] = useState<ContextService[]>([]);
+  const [contextFiles, setContextFiles] = useState<string[]>([]);
+  const [attachOpen, setAttachOpen] = useState(false);
+  const [attachPanel, setAttachPanel] = useState<AttachPanel>("menu");
+  const [pickingFile, setPickingFile] = useState(false);
+  const attachWrapRef = useRef<HTMLDivElement>(null);
+  const primaryContextService =
+    contextServices[0]?.name ?? contextServices[0]?.id ?? null;
   const [activeNav, setActiveNav] = useState<NavItem>(() => {
     const route = parseAppRoute(window.location.pathname);
     return route.kind === "settings" ? "Settings" : "New Chat";
   });
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [orchestratorRun, setOrchestratorRun] = useState<OrchestratorRun | null>(null);
-  const [conversations, setConversations] = useState<Conversation[]>(initialHistory.conversations);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
   const [draft, setDraft] = useState("");
   const [loading, setLoading] = useState(false);
   const [approvalBusy, setApprovalBusy] = useState(false);
   const [pickingFolder, setPickingFolder] = useState(false);
   const [error, setError] = useState("");
-  const [historyNotice, setHistoryNotice] = useState(
-    initialWorkspace.error ?? initialHistory.error,
-  );
+  const [historyNotice, setHistoryNotice] = useState<string | null>(null);
   const language = "fa" as const;
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [settingsView, setSettingsView] = useState<SettingsView | null>(null);
@@ -226,18 +278,48 @@ function App() {
   conversationIdRef.current = activeConversationId;
   const skipInitialHistorySave = useRef(true);
   const settingsReadyRef = useRef(false);
+  const persistHydratedRef = useRef(false);
   const routeHydratedRef = useRef(false);
   const localWorkspaceRef = useRef(localWorkspace);
   localWorkspaceRef.current = localWorkspace;
+  const companionWorkspaceId = settingsView?.workspace_id ?? null;
+  const companionWorkspaceIdRef = useRef(companionWorkspaceId);
+  companionWorkspaceIdRef.current = companionWorkspaceId;
+  const [chatMenuOpen, setChatMenuOpen] = useState(false);
+  const [renameDialogOpen, setRenameDialogOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [titleDraft, setTitleDraft] = useState("");
+  const [threadTitle, setThreadTitle] = useState<string | null>(null);
+  const [uiPreferences, setUiPreferences] = useState<UiPreferences>(() => loadUiPreferences());
+  const uiPreferencesRef = useRef(uiPreferences);
+  uiPreferencesRef.current = uiPreferences;
+  const chatMenuRef = useRef<HTMLDivElement>(null);
   const strings = copy[language];
-  const currentTitle = messages.find((message) => message.role === "user")?.text;
+
+  function rememberConversationForResume(conversationId: string | null) {
+    const next = patchUiPreferences({ lastConversationId: conversationId });
+    setUiPreferences(next);
+  }
+
+  function withQuickReplies(replies: QuickReply[] | undefined): { quickReplies?: QuickReply[] } {
+    if (!uiPreferencesRef.current.quickRepliesEnabled) return {};
+    if (!replies?.length) return {};
+    return { quickReplies: replies };
+  }
+  const inferredTitle =
+    messages.length >= 3
+      ? messages.find((message) => message.role === "user")?.text
+      : undefined;
+  const currentTitle = (threadTitle?.trim() || inferredTitle || "").trim() || undefined;
+  const canManageThread = Boolean(currentTitle || conversations.some((item) => item.id === activeConversationId));
   const recentConversations = hasLocalWorkspace
     ? [
         ...(currentTitle
           ? [{
               id: activeConversationId,
               title: currentTitle,
-              serviceId: selectedServiceId || "workspace",
+              serviceId: primaryContextService ?? "workspace",
+              contextServices,
               messages,
               updatedAt: new Date().toISOString(),
               orchestratorRun,
@@ -247,18 +329,18 @@ function App() {
       ].slice(0, 8)
     : [];
   const conversationsByFolder = useMemo(() => {
-    let stored: Record<string, Conversation[]> = {};
-    try {
-      stored = loadAllConversationHistory(window.localStorage).byWorkspace;
-    } catch {
-      stored = {};
-    }
-    const map: Record<string, Conversation[]> = { ...stored };
+    const map: Record<string, Conversation[]> = { ...folderHistoryByKey };
     if (workspaceKey) {
       map[workspaceKey] = recentConversations;
     }
     return map;
-  }, [recentConversations, workspaceKey, recentWorkspaces]);
+  }, [folderHistoryByKey, recentConversations, workspaceKey]);
+  const lastAssistantMessageIndex = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      if (messages[i]?.role === "assistant") return i;
+    }
+    return -1;
+  }, [messages]);
 
   function setConversationId(nextId: string) {
     conversationIdRef.current = nextId;
@@ -282,6 +364,35 @@ function App() {
     );
   }
 
+  async function hydratePersistence(workspaceId: string) {
+    if (persistHydratedRef.current) return;
+    const folders = await loadLocalWorkspace(workspaceId);
+    const all = await loadAllConversationHistory(workspaceId);
+    setLocalWorkspace(folders.workspace);
+    localWorkspaceRef.current = folders.workspace;
+    setRecentWorkspaces(folders.recent);
+    setFolderHistoryByKey(all.byWorkspace);
+    const activeKey = folders.workspace
+      ? normalizeWorkspaceKey(folders.workspace.path)
+      : null;
+    if (activeKey) {
+      setExpandedFolders((current) =>
+        current[activeKey] ? current : { ...current, [activeKey]: true },
+      );
+      const loaded = await loadConversationHistory(workspaceId, activeKey);
+      setConversations(loaded.conversations);
+      if (loaded.error) setHistoryNotice(loaded.error);
+    } else {
+      setConversations([]);
+    }
+    const persistOk = folders.error === null && all.error === null;
+    setHistoryCanBeSaved(persistOk);
+    if (folders.error) setHistoryNotice(folders.error);
+    else if (all.error) setHistoryNotice(all.error);
+    skipInitialHistorySave.current = true;
+    persistHydratedRef.current = true;
+  }
+
   async function refreshCatalog() {
     if (!settingsReadyRef.current) setSettingsLoadState("loading");
     setServicesState("loading");
@@ -292,9 +403,9 @@ function App() {
       settingsReadyRef.current = true;
       setSettingsLoadState("ready");
       setSettingsLoadError("");
+      await hydratePersistence(view.workspace_id);
       if (!view.liara.token_configured) {
         setServices([]);
-        setSelectedServiceId("");
         setServicesState("ready");
         setError(
           language === "fa"
@@ -305,8 +416,8 @@ function App() {
       }
       const catalog = await getServices(view.workspace_id);
       setServices(catalog);
-      setSelectedServiceId((current) =>
-        catalog.some((service) => service.id === current) ? current : (catalog[0]?.id ?? ""),
+      setContextServices((current) =>
+        current.filter((item) => catalog.some((service) => service.id === item.id)),
       );
       setServicesState("ready");
       setError("");
@@ -328,18 +439,54 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (!attachOpen) return;
+    function onPointerDown(event: MouseEvent) {
+      const root = attachWrapRef.current;
+      if (root && !root.contains(event.target as Node)) {
+        setAttachOpen(false);
+        setAttachPanel("menu");
+      }
+    }
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setAttachOpen(false);
+        setAttachPanel("menu");
+      }
+    }
+    window.addEventListener("mousedown", onPointerDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onPointerDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [attachOpen]);
+
+  useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages, orchestratorRun]);
 
   useEffect(() => {
     if (!hasLocalWorkspace) return;
-    const title = messages.find((message) => message.role === "user")?.text;
+    // Title locks in after the first 3 messages (user/assistant mix), then sticks.
+    const autoTitle =
+      messages.length >= 3
+        ? (messages.find((message) => message.role === "user")?.text || "").trim().slice(0, 56)
+        : "";
+    if (autoTitle && !threadTitle?.trim()) setThreadTitle(autoTitle);
+    const title =
+      (threadTitle?.trim() ||
+        autoTitle ||
+        (messages.some((message) => message.role === "user")
+          ? (messages.find((message) => message.role === "user")?.text || "").trim().slice(0, 56)
+          : "") ||
+        "").trim();
     if (!title) return;
 
     const currentConversation: Conversation = {
       id: conversationIdRef.current,
       title,
-      serviceId: selectedServiceId || "workspace",
+      serviceId: primaryContextService ?? "workspace",
+      contextServices,
       messages,
       updatedAt: new Date().toISOString(),
       orchestratorRun,
@@ -350,39 +497,75 @@ function App() {
     ].slice(0, 8));
     if (activeNav === "New Chat") {
       syncRoute({ kind: "chat", conversationId: currentConversation.id }, "replace");
+      rememberConversationForResume(currentConversation.id);
     }
-  }, [messages, orchestratorRun, selectedServiceId, hasLocalWorkspace, activeNav]);
+  }, [messages, orchestratorRun, contextServices, primaryContextService, hasLocalWorkspace, activeNav, threadTitle]);
 
   useEffect(() => {
-    function restoreConversationFromRoute(conversationId: string): boolean {
-      const found = findConversationInHistory(window.localStorage, conversationId);
+    if (!chatMenuOpen && !renameDialogOpen && !deleteDialogOpen) return;
+    function onPointerDown(event: MouseEvent) {
+      if (!chatMenuOpen) return;
+      const root = chatMenuRef.current;
+      if (root && !root.contains(event.target as Node)) setChatMenuOpen(false);
+    }
+    function onKey(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      if (renameDialogOpen) setRenameDialogOpen(false);
+      else if (deleteDialogOpen) setDeleteDialogOpen(false);
+      else setChatMenuOpen(false);
+    }
+    window.addEventListener("mousedown", onPointerDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onPointerDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [chatMenuOpen, renameDialogOpen, deleteDialogOpen]);
+
+  useEffect(() => {
+    async function restoreConversationFromRoute(conversationId: string): Promise<boolean> {
+      const workspaceId = companionWorkspaceIdRef.current;
+      if (!workspaceId) return false;
+      const found = await findConversationInHistory(workspaceId, conversationId);
       if (!found) return false;
 
       const activeKey = localWorkspaceRef.current
         ? normalizeWorkspaceKey(localWorkspaceRef.current.path)
         : null;
       if (found.workspaceKey !== activeKey) {
-        const activated = activateRecentWorkspace(window.localStorage, found.workspaceKey);
+        const activated = await activateRecentWorkspace(workspaceId, found.workspaceKey);
         if (!activated.workspace) return false;
         localWorkspaceRef.current = activated.workspace;
         setLocalWorkspace(activated.workspace);
-        setRecentWorkspaces(listRecentWorkspaces(window.localStorage));
+        setRecentWorkspaces(activated.recent);
         skipInitialHistorySave.current = true;
-        const loaded = loadConversationHistory(window.localStorage, found.workspaceKey);
+        const loaded = await loadConversationHistory(workspaceId, found.workspaceKey);
         setConversations(loaded.conversations);
+        setFolderHistoryByKey((current) => ({
+          ...current,
+          [found.workspaceKey]: loaded.conversations,
+        }));
       }
       ensureFolderExpanded(found.workspaceKey);
       setConversationId(found.conversation.id);
-      setSelectedServiceId(
-        found.conversation.serviceId === "workspace" ? "" : found.conversation.serviceId,
+      setThreadTitle(found.conversation.title);
+      setContextServices(
+        found.conversation.contextServices?.length
+          ? found.conversation.contextServices
+          : found.conversation.serviceId !== "workspace"
+            ? [{ id: found.conversation.serviceId, name: found.conversation.serviceId }]
+            : [],
       );
+      setContextFiles([]);
       setMessages(found.conversation.messages);
       setOrchestratorRun(found.conversation.orchestratorRun);
       setError("");
+      setChatMenuOpen(false);
+      rememberConversationForResume(found.conversation.id);
       return true;
     }
 
-    function applyRoute(route: AppRoute) {
+    async function applyRoute(route: AppRoute, options?: { allowResume?: boolean }) {
       if (route.kind === "settings") {
         setActiveNav("Settings");
         setMobileNavOpen(false);
@@ -393,6 +576,15 @@ function App() {
       setMobileNavOpen(false);
 
       if (!route.conversationId) {
+        const prefs = uiPreferencesRef.current;
+        const resumeId =
+          options?.allowResume && prefs.resumeConversationOnRefresh
+            ? prefs.lastConversationId
+            : null;
+        if (resumeId && (await restoreConversationFromRoute(resumeId))) {
+          syncRoute({ kind: "chat", conversationId: resumeId }, "replace");
+          return;
+        }
         setConversationId(id());
         setMessages([]);
         setOrchestratorRun(null);
@@ -403,7 +595,7 @@ function App() {
 
       if (route.conversationId === conversationIdRef.current) return;
 
-      if (!restoreConversationFromRoute(route.conversationId)) {
+      if (!(await restoreConversationFromRoute(route.conversationId))) {
         navigateAppRoute({ kind: "chat", conversationId: null }, "replace");
         setConversationId(id());
         setMessages([]);
@@ -411,33 +603,45 @@ function App() {
       }
     }
 
+    if (!persistHydratedRef.current || !companionWorkspaceId) return;
+
     if (!routeHydratedRef.current) {
       routeHydratedRef.current = true;
-      applyRoute(parseAppRoute(window.location.pathname));
+      void applyRoute(parseAppRoute(window.location.pathname), { allowResume: true });
     }
 
     function onPopState() {
-      applyRoute(parseAppRoute(window.location.pathname));
+      void applyRoute(parseAppRoute(window.location.pathname));
     }
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
-    // Mount-only: restore URL once and listen for browser back/forward.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [companionWorkspaceId]);
 
   useEffect(() => {
-    if (!historyCanBeSaved || !workspaceKey) return;
+    if (!historyCanBeSaved || !workspaceKey || !companionWorkspaceId) return;
     if (skipInitialHistorySave.current) {
       skipInitialHistorySave.current = false;
       return;
     }
 
-    try {
-      setHistoryNotice(saveConversationHistory(window.localStorage, workspaceKey, conversations));
-    } catch {
-      setHistoryNotice("ذخیره تاریخچه در این مرورگر ممکن نشد. فضای ذخیره‌سازی را بررسی کنید.");
-    }
-  }, [conversations, historyCanBeSaved, workspaceKey]);
+    const workspaceId = companionWorkspaceId;
+    const key = workspaceKey;
+    let cancelled = false;
+    void (async () => {
+      const saveError = await saveConversationHistory(workspaceId, key, conversations);
+      if (cancelled) return;
+      setHistoryNotice(saveError);
+      if (!saveError) {
+        setFolderHistoryByKey((current) => ({
+          ...current,
+          [key]: conversations,
+        }));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [conversations, historyCanBeSaved, workspaceKey, companionWorkspaceId]);
 
   function resetActiveThread(options?: { syncUrl?: boolean; mode?: "push" | "replace" }) {
     setConversationId(id());
@@ -445,24 +649,144 @@ function App() {
     setOrchestratorRun(null);
     setDraft("");
     setError("");
+    setContextServices([]);
+    setContextFiles([]);
+    setAttachOpen(false);
+    setAttachPanel("menu");
+    setThreadTitle(null);
+    setChatMenuOpen(false);
+    setRenameDialogOpen(false);
+    setDeleteDialogOpen(false);
+    rememberConversationForResume(null);
     if (options?.syncUrl !== false) {
       syncRoute({ kind: "chat", conversationId: null }, options?.mode ?? "push");
     }
   }
 
-  function flushConversationsForKey(
+  function openRenameDialog() {
+    setChatMenuOpen(false);
+    setTitleDraft(currentTitle ?? "");
+    setRenameDialogOpen(true);
+  }
+
+  function openDeleteDialog() {
+    setChatMenuOpen(false);
+    setDeleteDialogOpen(true);
+  }
+
+  async function applyRenameTitle() {
+    const nextTitle = titleDraft.trim();
+    if (!nextTitle) return;
+    setThreadTitle(nextTitle);
+    setConversations((current) => {
+      const existing = current.find((item) => item.id === activeConversationId);
+      if (!existing) {
+        if (!messages.some((message) => message.role === "user")) return current;
+        return [
+          {
+            id: activeConversationId,
+            title: nextTitle,
+            serviceId: primaryContextService ?? "workspace",
+            contextServices,
+            messages: [...messages],
+            updatedAt: new Date().toISOString(),
+            orchestratorRun,
+          },
+          ...current,
+        ].slice(0, 8);
+      }
+      return current.map((item) =>
+        item.id === activeConversationId
+          ? { ...item, title: nextTitle, updatedAt: new Date().toISOString() }
+          : item,
+      );
+    });
+    setRenameDialogOpen(false);
+  }
+
+  async function confirmDeleteConversation() {
+    const workspaceId = companionWorkspaceIdRef.current;
+    const key = workspaceKey;
+    const targetId = activeConversationId;
+    const next = conversations.filter((item) => item.id !== targetId);
+    setConversations(next);
+    if (key) {
+      setFolderHistoryByKey((current) => ({ ...current, [key]: next }));
+      if (historyCanBeSaved && workspaceId) {
+        const saveError = await saveConversationHistory(workspaceId, key, next);
+        if (saveError) setHistoryNotice(saveError);
+      }
+    }
+    setDeleteDialogOpen(false);
+    resetActiveThread({ mode: "replace" });
+  }
+
+  function addContextService(service: ContextService) {
+    setContextServices((current) => {
+      if (current.some((item) => item.id === service.id)) return current;
+      return [...current, service].slice(0, 8);
+    });
+  }
+
+  function removeContextService(serviceId: string) {
+    setContextServices((current) => current.filter((item) => item.id !== serviceId));
+  }
+
+  function removeContextFile(path: string) {
+    setContextFiles((current) => current.filter((item) => item !== path));
+  }
+
+  async function pickContextFile() {
+    if (pickingFile) return;
+    setPickingFile(true);
+    setAttachOpen(false);
+    setAttachPanel("menu");
+    try {
+      const result = await pickLocalPath("file");
+      if (result.cancelled || !result.path) return;
+      setContextFiles((current) =>
+        current.includes(result.path!) ? current : [...current, result.path!].slice(0, 6),
+      );
+    } catch (cause: unknown) {
+      const message =
+        cause instanceof Error
+          ? cause.message
+          : language === "fa"
+            ? "انتخاب فایل ممکن نشد."
+            : "Could not open the file picker.";
+      setError(message);
+    } finally {
+      setPickingFile(false);
+    }
+  }
+
+  function buildGoalWithContext(prompt: string): string {
+    if (contextFiles.length === 0) return prompt;
+    const files =
+      language === "fa"
+        ? `فایل‌های زمینه: ${contextFiles.join("، ")}`
+        : `Context files: ${contextFiles.join(", ")}`;
+    return `${prompt}\n\n${files}`;
+  }
+
+  async function flushConversationsForKey(
     key: string | null,
     list: Conversation[],
     includeCurrent: boolean,
-  ): Conversation[] {
+  ): Promise<Conversation[]> {
     let next = list;
     if (includeCurrent) {
-      const title = messages.find((message) => message.role === "user")?.text;
+      const auto =
+        messages.length >= 3
+          ? (messages.find((message) => message.role === "user")?.text || "").trim().slice(0, 56)
+          : "";
+      const title = (threadTitle?.trim() || auto || "").trim();
       if (title) {
         const currentConversation: Conversation = {
           id: conversationIdRef.current,
           title,
-          serviceId: selectedServiceId || "workspace",
+          serviceId: primaryContextService ?? "workspace",
+          contextServices,
           messages: [...messages],
           updatedAt: new Date().toISOString(),
           orchestratorRun,
@@ -473,18 +797,28 @@ function App() {
         ].slice(0, 8);
       }
     }
-    if (key && historyCanBeSaved) {
-      try {
-        const saveError = saveConversationHistory(window.localStorage, key, next);
-        if (saveError) setHistoryNotice(saveError);
-      } catch {
-        setHistoryNotice("ذخیره تاریخچه در این مرورگر ممکن نشد. فضای ذخیره‌سازی را بررسی کنید.");
+    const workspaceId = companionWorkspaceIdRef.current;
+    if (key && historyCanBeSaved && workspaceId) {
+      const saveError = await saveConversationHistory(workspaceId, key, next);
+      if (saveError) setHistoryNotice(saveError);
+      else {
+        setFolderHistoryByKey((current) => ({ ...current, [key]: next }));
       }
     }
     return next;
   }
 
-  function applyLocalWorkspace(next: LocalWorkspace) {
+  async function applyLocalWorkspace(next: LocalWorkspace) {
+    const workspaceId = companionWorkspaceIdRef.current;
+    if (!workspaceId) {
+      setError(
+        language === "fa"
+          ? "فضای کار همراه هنوز آماده نیست. چند لحظه صبر کنید."
+          : "Companion workspace is not ready yet.",
+      );
+      return;
+    }
+
     const previous = localWorkspaceRef.current;
     const previousKey = previous ? normalizeWorkspaceKey(previous.path) : null;
     const nextKey = normalizeWorkspaceKey(next.path);
@@ -495,24 +829,28 @@ function App() {
 
     try {
       if (previousKey && previousKey !== nextKey) {
-        flushConversationsForKey(previousKey, conversations, true);
+        await flushConversationsForKey(previousKey, conversations, true);
       }
 
-      const saveError = saveLocalWorkspace(window.localStorage, next);
-      if (saveError) {
-        setHistoryNotice(saveError);
+      const saved = await saveLocalWorkspace(workspaceId, next);
+      if (saved.error || !saved.workspace) {
+        setHistoryNotice(saved.error ?? strings.folderGateError);
         return;
       }
 
-      setLocalWorkspace(next);
-      localWorkspaceRef.current = next;
-      setRecentWorkspaces(listRecentWorkspaces(window.localStorage));
+      setLocalWorkspace(saved.workspace);
+      localWorkspaceRef.current = saved.workspace;
+      setRecentWorkspaces(saved.recent);
       ensureFolderExpanded(nextKey);
 
       if (!previousKey || previousKey !== nextKey) {
         skipInitialHistorySave.current = true;
-        const loaded = loadConversationHistory(window.localStorage, nextKey);
+        const loaded = await loadConversationHistory(workspaceId, nextKey);
         setConversations(loaded.conversations);
+        setFolderHistoryByKey((current) => ({
+          ...current,
+          [nextKey]: loaded.conversations,
+        }));
         if (loaded.error) setHistoryNotice(loaded.error);
         resetActiveThread({ mode: "replace" });
         setActiveNav("New Chat");
@@ -531,12 +869,19 @@ function App() {
 
   function switchToRecentWorkspace(path: string) {
     setError("");
-    const activated = activateRecentWorkspace(window.localStorage, path);
-    if (activated.error || !activated.workspace) {
-      setHistoryNotice(activated.error ?? strings.folderGateError);
+    const workspaceId = companionWorkspaceIdRef.current;
+    if (!workspaceId) {
+      setHistoryNotice(strings.folderGateError);
       return;
     }
-    applyLocalWorkspace(activated.workspace);
+    void (async () => {
+      const activated = await activateRecentWorkspace(workspaceId, path);
+      if (activated.error || !activated.workspace) {
+        setHistoryNotice(activated.error ?? strings.folderGateError);
+        return;
+      }
+      await applyLocalWorkspace(activated.workspace);
+    })();
   }
 
   async function pickWorkspaceFolder() {
@@ -550,7 +895,7 @@ function App() {
       if (!path) return;
       // Defer apply so the native dialog can fully dismiss before React re-renders.
       window.setTimeout(() => {
-        applyLocalWorkspace({
+        void applyLocalWorkspace({
           version: 1,
           path,
           displayName: folderDisplayName(path),
@@ -607,27 +952,29 @@ function App() {
     }
 
     const workspaceId = settingsView!.workspace_id;
+    const goal = buildGoalWithContext(prompt);
     setActiveNav("New Chat");
     setError("");
     setLoading(true);
     setOrchestratorRun(null);
+    setAttachOpen(false);
     if (options?.prependUser !== false) {
       setMessages((current) => [...current, { id: id(), role: "user", text: prompt }]);
     }
 
     try {
       const appPath = localWorkspaceRef.current?.path ?? null;
-      const created = await createCase(workspaceId, prompt);
+      const created = await createCase(workspaceId, goal);
       let run: OrchestratorRun = {
         case_id: created.id,
         workspace_id: workspaceId,
-        goal: prompt,
+        goal,
         stage: "assessing",
         // Inspector timeline is request-derived; chat bubbles stay quiet (02).
         summary: language === "fa" ? "در حال آماده‌سازی پاسخ…" : "Preparing a reply…",
         timeline: buildRequestTimeline({
           language,
-          goal: prompt,
+          goal,
           stage: "assessing",
         }),
         events: [stamp("create_case")],
@@ -642,7 +989,7 @@ function App() {
         summary: language === "fa" ? "در حال آماده‌سازی طرح…" : "Drafting a plan…",
         timeline: buildRequestTimeline({
           language,
-          goal: prompt,
+          goal,
           stage: "planning",
           readiness,
         }),
@@ -650,15 +997,16 @@ function App() {
       };
       setOrchestratorRun(run);
 
-      const route = resolveChallengeLoopRoute(prompt, {
-        selectedServiceId: selectedServiceId || null,
+      // Context service skips intake when present; otherwise GenUI asks for it.
+      const route = resolveChallengeLoopRoute(goal, {
+        selectedServiceId: primaryContextService,
       });
 
       if (route.mode === "troubleshoot") {
         await runTroubleshootLoop({
           workspaceId,
           caseId: created.id,
-          goal: prompt,
+          goal,
           projectName: route.projectName,
           readiness,
           priorEvents: run.events,
@@ -671,7 +1019,7 @@ function App() {
         await runMaintainMonitorLoop({
           workspaceId,
           caseId: created.id,
-          goal: prompt,
+          goal,
           target: route.target,
           readiness,
           priorEvents: run.events,
@@ -691,7 +1039,7 @@ function App() {
           summary: reply,
           timeline: buildRequestTimeline({
             language,
-            goal: prompt,
+            goal,
             stage: "verified",
             readiness,
             operationState: "conversation",
@@ -701,7 +1049,12 @@ function App() {
         setOrchestratorRun(next);
         setMessages((current) => [
           ...current,
-          { id: id(), role: "assistant", text: reply, kind: "live" },
+          {
+            id: id(),
+            role: "assistant",
+            text: reply,
+            ...withQuickReplies(whatNextReplies(language)),
+          },
         ]);
         return;
       }
@@ -709,7 +1062,7 @@ function App() {
       if (route.mode === "intake") {
         await pauseForIntake({
           workspaceId,
-          goal: prompt,
+          goal,
           intakeKind: route.intakeKind,
           readiness,
           priorRun: run,
@@ -720,7 +1073,7 @@ function App() {
       await finalizePlanFromIntake({
         workspaceId,
         caseId: created.id,
-        goal: prompt,
+        goal,
         readiness,
         priorEvents: run.events,
         priorRun: run,
@@ -780,6 +1133,9 @@ function App() {
           id: plan.id,
           label: plan.label,
           hint: plan.hint,
+          price_monthly: plan.price_monthly ?? null,
+          ram_gb: plan.ram_gb ?? null,
+          tier: plan.tier,
         }));
       }
     } catch (cause) {
@@ -791,6 +1147,18 @@ function App() {
             : "Could not load services or plans.";
     }
 
+    const suggestedPlatform = req.require_platform
+      ? suggestLiaraPlatform({
+          readinessPlatform: args.readiness?.platform,
+        }).id
+      : null;
+    const suggestedServiceName = req.prefer_new_service
+      ? suggestServiceNameFromPackage(
+          args.readiness?.package_name,
+          localWorkspaceRef.current?.path,
+        )
+      : null;
+
     const intakeText = intakeAssistantPrompt(args.intakeKind, language);
     const next: OrchestratorRun = {
       ...args.priorRun,
@@ -799,8 +1167,13 @@ function App() {
         kind: args.intakeKind,
         services: intakeServices,
         plans: intakePlans,
+        platforms: req.require_platform ? enrichPlatformOptions(LIARA_PLATFORMS) : [],
         require_plan: req.require_plan,
         require_domain: req.require_domain,
+        require_platform: req.require_platform,
+        suggested_platform: suggestedPlatform,
+        suggested_service_name: suggestedServiceName,
+        prefer_new_service: req.prefer_new_service,
         load_error: loadError,
       },
       summary: intakeText,
@@ -813,9 +1186,22 @@ function App() {
       events: [...args.priorRun.events, stamp("await_intake")],
     };
     setOrchestratorRun(next);
+    // Only one-tap service chips when GenUI needs no plan/domain fields.
+    const serviceOnly = !req.require_plan && !req.require_domain;
+    const quickReplies = loadError
+      ? [settingsReply(language)]
+      : serviceOnly && intakeServices.length > 0
+        ? intakeServiceReplies(intakeServices, language)
+        : undefined;
     setMessages((current) => [
       ...current,
-      { id: id(), role: "assistant", text: intakeText, kind: "live" },
+      {
+        id: id(),
+        role: "assistant",
+        text: intakeText,
+        // Service chips are intake shortcuts; no “what next” while GenUI waits.
+        ...withQuickReplies(quickReplies),
+      },
     ]);
   }
 
@@ -877,38 +1263,33 @@ function App() {
       ],
     };
 
-    const enabled = fixOptions.options.find((option) => option.enabled);
-    if (enabled) {
-      const plan = await createPlanFromFix({
-        workspaceId: args.workspaceId,
-        caseId: args.caseId,
-        optionId: enabled.id,
-      });
-      const assistantText = planReadyAssistantText(
-        language,
-        diagnosis.summary ?? plan.body.summary,
-      );
+    const fixChips = fixOptionReplies(fixOptions.options);
+    if (fixChips.length > 0) {
+      const assistantText =
+        language === "fa"
+          ? `${diagnosis.summary?.trim() || "تشخیص آماده است."} یکی از گزینه‌های زیر را انتخاب کنید تا طرح پیشنهادی ساخته شود — اجرا فقط بعد از تأیید.`
+          : `${diagnosis.summary?.trim() || "Diagnosis ready."} Pick an option below to draft a plan — nothing runs until you Approve.`;
       const next: OrchestratorRun = {
         ...run,
-        stage: "awaiting_approval",
-        plan_id: plan.plan_id,
-        plan_version: plan.version,
-        content_hash: plan.content_hash,
-        plan_body: plan.body,
+        stage: "planning",
         summary: assistantText,
         timeline: buildRequestTimeline({
           language,
           goal: args.goal,
-          stage: "awaiting_approval",
-          planBody: plan.body,
+          stage: "planning",
           readiness: args.readiness,
         }),
-        events: [...run.events, stamp("create_plan_from_fix")],
+        events: [...run.events, stamp("await_fix_choice")],
       };
       setOrchestratorRun(next);
       setMessages((current) => [
         ...current,
-        { id: id(), role: "assistant", text: assistantText, kind: "live" },
+        {
+          id: id(),
+          role: "assistant",
+          text: assistantText,
+          ...withQuickReplies(fixChips),
+        },
       ]);
       return;
     }
@@ -941,8 +1322,79 @@ function App() {
     setOrchestratorRun(next);
     setMessages((current) => [
       ...current,
-      { id: id(), role: "assistant", text: summary, kind: "live" },
+      {
+        id: id(),
+        role: "assistant",
+        text: summary,
+        ...withQuickReplies(
+          diagnosisFollowUpReplies(language, diagnosis.next_read_or_question),
+        ),
+      },
     ]);
+  }
+
+  async function selectFixOption(optionId: string) {
+    if (!orchestratorRun || loading || approvalBusy) return;
+    if (!orchestratorRun.fix_options?.options.some((option) => option.id === optionId && option.enabled)) {
+      return;
+    }
+    setLoading(true);
+    setError("");
+    clearLatestQuickReplies();
+    try {
+      const plan = await createPlanFromFix({
+        workspaceId: orchestratorRun.workspace_id,
+        caseId: orchestratorRun.case_id,
+        optionId,
+      });
+      const assistantText = planReadyAssistantText(
+        language,
+        orchestratorRun.diagnosis?.summary ?? plan.body.summary,
+      );
+      const next: OrchestratorRun = {
+        ...orchestratorRun,
+        stage: "awaiting_approval",
+        plan_id: plan.plan_id,
+        plan_version: plan.version,
+        content_hash: plan.content_hash,
+        plan_body: plan.body,
+        summary: assistantText,
+        timeline: buildRequestTimeline({
+          language,
+          goal: orchestratorRun.goal,
+          stage: "awaiting_approval",
+          planBody: plan.body,
+          readiness: orchestratorRun.readiness,
+        }),
+        events: [...orchestratorRun.events, stamp("create_plan_from_fix")],
+      };
+      setOrchestratorRun(next);
+      // HITL lives on the generative approval card — no duplicate chips / “what next”.
+      setMessages((current) => [
+        ...current,
+        {
+          id: id(),
+          role: "assistant",
+          text: assistantText,
+        },
+      ]);
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "Could not draft a fix plan.";
+      setError(message);
+      setMessages((current) => [
+        ...current,
+        {
+          id: id(),
+          role: "assistant",
+          text:
+            language === "fa"
+              ? `ساخت طرح اصلاح ناموفق بود: ${message}`
+              : `Could not draft the fix plan: ${message}`,
+        },
+      ]);
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function runMaintainMonitorLoop(args: {
@@ -981,7 +1433,12 @@ function App() {
     setOrchestratorRun(next);
     setMessages((current) => [
       ...current,
-      { id: id(), role: "assistant", text: summary, kind: "live" },
+      {
+        id: id(),
+        role: "assistant",
+        text: summary,
+        ...withQuickReplies(verifiedFollowUpReplies(language)),
+      },
     ]);
   }
 
@@ -1026,15 +1483,57 @@ function App() {
       events: [...args.priorEvents, stamp("create_plan")],
     };
     setOrchestratorRun(next);
+    // Plan + Approve/Reject are on the GenUI card; plain text only here.
     setMessages((current) => [
       ...current,
       {
         id: id(),
         role: "assistant",
         text: assistantText,
-        kind: "live",
       },
     ]);
+  }
+
+  function clearLatestQuickReplies() {
+    setMessages((current) => {
+      for (let index = current.length - 1; index >= 0; index -= 1) {
+        const message = current[index];
+        if (message?.role === "assistant" && message.quickReplies?.length) {
+          const next = [...current];
+          next[index] = { ...message, quickReplies: undefined };
+          return next;
+        }
+      }
+      return current;
+    });
+  }
+
+  async function handleQuickReply(reply: QuickReply) {
+    if (loading || approvalBusy) return;
+    clearLatestQuickReplies();
+    if (reply.kind === "prompt" && reply.prompt) {
+      await startOrchestratorGoal(reply.prompt);
+      return;
+    }
+    if (reply.kind === "approve") {
+      await decideApproval("approve");
+      return;
+    }
+    if (reply.kind === "reject") {
+      await decideApproval("reject");
+      return;
+    }
+    if (reply.kind === "settings") {
+      navigate("Settings");
+      return;
+    }
+    if (reply.kind === "fix" && reply.value) {
+      await selectFixOption(reply.value);
+      return;
+    }
+    if (reply.kind === "intake_service" && reply.value) {
+      await confirmIntake({ project_name: reply.value });
+    }
   }
 
   async function confirmIntake(values: IntakeConfirmValues) {
@@ -1046,6 +1545,13 @@ function App() {
     setLoading(true);
     setError("");
     setActiveNav("New Chat");
+    clearLatestQuickReplies();
+    if (values.project_name.trim()) {
+      addContextService({
+        id: values.project_name.trim(),
+        name: values.project_name.trim(),
+      });
+    }
 
     try {
       const appPath = localWorkspaceRef.current?.path ?? null;
@@ -1094,6 +1600,7 @@ function App() {
         kind,
         project_name: values.project_name,
         plan_id: values.plan_id,
+        platform: values.platform,
         domain_name: values.domain_name,
         app_path: appPath,
       });
@@ -1207,7 +1714,16 @@ function App() {
         events: [...orchestratorRun.events, stamp("reject_plan", "user")],
       };
       setOrchestratorRun(rejected);
-      setMessages((current) => [...current, { id: id(), role: "assistant", text: rejected.summary, kind: "live" }]);
+      clearLatestQuickReplies();
+      setMessages((current) => [
+        ...current,
+        {
+          id: id(),
+          role: "assistant",
+          text: rejected.summary,
+          ...withQuickReplies(whatNextReplies(language)),
+        },
+      ]);
       setApprovalBusy(false);
       return;
     }
@@ -1300,7 +1816,16 @@ function App() {
             }
           : current,
       );
-      setMessages((current) => [...current, { id: id(), role: "assistant", text: doneSummary, kind: "live" }]);
+      clearLatestQuickReplies();
+      setMessages((current) => [
+        ...current,
+        {
+          id: id(),
+          role: "assistant",
+          text: doneSummary,
+          ...withQuickReplies(verifiedFollowUpReplies(language)),
+        },
+      ]);
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : "The approval request failed.";
       setError(message);
@@ -1323,9 +1848,15 @@ function App() {
             }
           : current,
       );
+      const needsSettings = /token|Settings|configure|workspace|Liara|Aval/i.test(message);
       setMessages((current) => [
         ...current,
-        { id: id(), role: "assistant", text: language === "fa" ? `تأیید/اجرا ناموفق: ${message}` : `Approve/execute failed: ${message}` },
+        {
+          id: id(),
+          role: "assistant",
+          text: language === "fa" ? `تأیید/اجرا ناموفق: ${message}` : `Approve/execute failed: ${message}`,
+          ...(needsSettings ? withQuickReplies([settingsReply(language)]) : {}),
+        },
       ]);
     } finally {
       setApprovalBusy(false);
@@ -1334,12 +1865,17 @@ function App() {
 
   function archiveCurrentConversation() {
     if (!hasLocalWorkspace) return;
-    const title = messages.find((message) => message.role === "user")?.text;
+    const auto =
+      messages.length >= 3
+        ? (messages.find((message) => message.role === "user")?.text || "").trim().slice(0, 56)
+        : "";
+    const title = (threadTitle?.trim() || auto || "").trim();
     if (!title) return;
     const conversation: Conversation = {
       id: conversationIdRef.current,
       title,
-      serviceId: selectedServiceId || "workspace",
+      serviceId: primaryContextService ?? "workspace",
+      contextServices,
       messages: [...messages],
       updatedAt: new Date().toISOString(),
       orchestratorRun,
@@ -1351,44 +1887,62 @@ function App() {
   }
 
   function openConversation(conversation: Conversation, folderKey?: string) {
-    if (folderKey && folderKey !== workspaceKey) {
-      const folder = recentWorkspaces.find(
-        (item) => normalizeWorkspaceKey(item.path) === folderKey,
-      );
-      if (folder) {
-        const previous = localWorkspaceRef.current;
-        const previousKey = previous ? normalizeWorkspaceKey(previous.path) : null;
-        if (previousKey && previousKey !== folderKey) {
-          flushConversationsForKey(previousKey, conversations, true);
+    void (async () => {
+      const workspaceId = companionWorkspaceIdRef.current;
+      if (folderKey && folderKey !== workspaceKey && workspaceId) {
+        const folder = recentWorkspaces.find(
+          (item) => normalizeWorkspaceKey(item.path) === folderKey,
+        );
+        if (folder) {
+          const previous = localWorkspaceRef.current;
+          const previousKey = previous ? normalizeWorkspaceKey(previous.path) : null;
+          if (previousKey && previousKey !== folderKey) {
+            await flushConversationsForKey(previousKey, conversations, true);
+          }
+          const activated = await activateRecentWorkspace(workspaceId, folder.path);
+          if (activated.workspace) {
+            localWorkspaceRef.current = activated.workspace;
+            setLocalWorkspace(activated.workspace);
+            setRecentWorkspaces(activated.recent);
+            skipInitialHistorySave.current = true;
+            const loaded = await loadConversationHistory(workspaceId, folderKey);
+            setConversations(loaded.conversations);
+            setFolderHistoryByKey((current) => ({
+              ...current,
+              [folderKey]: loaded.conversations,
+            }));
+          }
         }
-        const activated = activateRecentWorkspace(window.localStorage, folder.path);
-        if (activated.workspace) {
-          localWorkspaceRef.current = activated.workspace;
-          setLocalWorkspace(activated.workspace);
-          setRecentWorkspaces(listRecentWorkspaces(window.localStorage));
-          skipInitialHistorySave.current = true;
-          const loaded = loadConversationHistory(window.localStorage, folderKey);
-          setConversations(loaded.conversations);
-        }
+        ensureFolderExpanded(folderKey);
       }
-      ensureFolderExpanded(folderKey);
-    }
 
-    if (conversation.id === conversationIdRef.current) {
+      if (conversation.id === conversationIdRef.current) {
+        setActiveNav("New Chat");
+        setMobileNavOpen(false);
+        syncRoute({ kind: "chat", conversationId: conversation.id });
+        rememberConversationForResume(conversation.id);
+        return;
+      }
+      archiveCurrentConversation();
+      setConversationId(conversation.id);
+      setThreadTitle(conversation.title);
+      setChatMenuOpen(false);
+      setContextServices(
+        conversation.contextServices?.length
+          ? conversation.contextServices
+          : conversation.serviceId !== "workspace"
+            ? [{ id: conversation.serviceId, name: conversation.serviceId }]
+            : [],
+      );
+      setContextFiles([]);
+      setMessages(conversation.messages);
+      setOrchestratorRun(conversation.orchestratorRun);
       setActiveNav("New Chat");
       setMobileNavOpen(false);
+      setError("");
       syncRoute({ kind: "chat", conversationId: conversation.id });
-      return;
-    }
-    archiveCurrentConversation();
-    setConversationId(conversation.id);
-    setSelectedServiceId(conversation.serviceId === "workspace" ? "" : conversation.serviceId);
-    setMessages(conversation.messages);
-    setOrchestratorRun(conversation.orchestratorRun);
-    setActiveNav("New Chat");
-    setMobileNavOpen(false);
-    setError("");
-    syncRoute({ kind: "chat", conversationId: conversation.id });
+      rememberConversationForResume(conversation.id);
+    })();
   }
 
   function navigate(item: NavItem) {
@@ -1446,34 +2000,73 @@ function App() {
         <>
           <header className="chat-topbar">
             <button className="mobile-menu icon-button" onClick={() => setMobileNavOpen(true)} aria-label="باز کردن منو"><Menu size={18} /></button>
-            <div className="flex min-w-0 items-center gap-2">
+            <div className="flex min-w-0 flex-1 items-center gap-2">
               <span className="topbar-spark"><Sparkles size={14} /></span>
               <span className="truncate text-sm font-medium text-slate-200">
                 {orchestratorRun
-                  ? (orchestratorRun.goal.slice(0, 48) || strings.workspace)
+                  ? (orchestratorRun.goal.split("\n")[0]?.slice(0, 48) || strings.workspace)
                   : (localWorkspace?.displayName ?? strings.workspace)}
               </span>
               <span className="topbar-separator" />
-              <span className={`topbar-mode ${settingsView?.liara.token_configured ? "topbar-mode-live" : ""}`}>
-                <span /> {settingsView?.liara.token_configured ? "حالت زنده" : "نیاز به پیکربندی"}
-              </span>
+              {contextServices.length > 0 ? (
+                <div className="topbar-services" aria-label="سرویس‌های زمینه">
+                  {contextServices.map((service) => (
+                    <a
+                      key={service.id}
+                      className="topbar-service-chip"
+                      href={liaraServiceConsoleUrl(service.name)}
+                      target="_blank"
+                      rel="noreferrer"
+                      title={service.name}
+                    >
+                      <Server size={11} />
+                      <span>{service.name}</span>
+                      <ExternalLink size={10} />
+                    </a>
+                  ))}
+                </div>
+              ) : (
+                <span className="topbar-context-empty">{strings.noContextService}</span>
+              )}
             </div>
             <div className="logical-end flex items-center gap-2">
-              <label className="service-picker">
-                <span className="service-health-dot" />
-                <select
-                  aria-label="انتخاب سرویس"
-                  value={selectedServiceId}
-                  onChange={(event) => setSelectedServiceId(event.target.value)}
-                  disabled={services.length === 0}
+              <div className="chat-menu-wrap" ref={chatMenuRef}>
+                <button
+                  type="button"
+                  className="icon-button"
+                  aria-label={strings.chatOptions}
+                  aria-expanded={chatMenuOpen}
+                  aria-haspopup="menu"
+                  disabled={!hasLocalWorkspace}
+                  onClick={() => setChatMenuOpen((open) => !open)}
                 >
-                  {services.length === 0 ? <option value="">{strings.noServices}</option> : null}
-                  {services.map((service) => <option key={service.id} value={service.id}>{service.name}</option>)}
-                </select>
-                <ChevronDown size={13} />
-              </label>
-
-              <button className="icon-button desktop-menu" aria-label="گزینه‌های بیشتر"><MoreHorizontal size={18} /></button>
+                  <MoreHorizontal size={18} />
+                </button>
+                {chatMenuOpen && (
+                  <div className="chat-menu-popover" role="menu" aria-label={strings.chatOptions}>
+                    <button
+                      type="button"
+                      className="chat-menu-item"
+                      role="menuitem"
+                      disabled={!canManageThread}
+                      onClick={openRenameDialog}
+                    >
+                      <Pencil size={14} />
+                      <span>{strings.renameChat}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="chat-menu-item danger"
+                      role="menuitem"
+                      disabled={!canManageThread}
+                      onClick={openDeleteDialog}
+                    >
+                      <Trash2 size={14} />
+                      <span>{strings.deleteChat}</span>
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           </header>
 
@@ -1523,30 +2116,68 @@ function App() {
               </div>
             ) : (
               <div className="message-list">
-                {messages.map((message) => (
-                  <div className={`message-row ${message.role}`} key={message.id}>
-                    <div className={message.role === "assistant" ? "assistant-avatar" : "user-avatar"}>
-                      {message.role === "assistant" ? <Sparkles size={14} /> : "ش"}
-                    </div>
-                    <div className="message-stack">
-                      <div className="message-meta">
-                        <span>{message.role === "assistant" ? "همراه لیارا" : "شما"}</span>
-                        {message.kind === "demo" && <span className="message-demo">SIMULATED</span>}
-                        {message.kind === "live" && <span className="message-demo message-live">زنده</span>}
+                {messages.map((message, messageIndex) => {
+                  const awaitingGen = generativeAwaitingUser(orchestratorRun?.stage);
+                  const visibleReplies = (message.quickReplies ?? []).filter((reply) => {
+                    // While GenUI owns the turn, keep only chips that drive that surface
+                    // (service / fix). Hide “what next” prompts until the final plain message.
+                    if (!awaitingGen) return true;
+                    return (
+                      reply.kind === "fix" ||
+                      reply.kind === "intake_service" ||
+                      reply.kind === "settings"
+                    );
+                  });
+                  const showQuickReplies =
+                    uiPreferences.quickRepliesEnabled &&
+                    message.role === "assistant" &&
+                    messageIndex === lastAssistantMessageIndex &&
+                    visibleReplies.length > 0 &&
+                    !loading &&
+                    !approvalBusy;
+                  return (
+                    <div className={`message-row ${message.role}`} key={message.id}>
+                      <div className={message.role === "assistant" ? "assistant-avatar" : "user-avatar"}>
+                        {message.role === "assistant" ? <Sparkles size={14} /> : "ش"}
                       </div>
-                      <div className="message-bubble">
-                        <p className="message-text">{message.text}</p>
+                      <div className="message-stack">
+                        <div className="message-meta">
+                          <span>{message.role === "assistant" ? "همراه لیارا" : "شما"}</span>
+                          {message.kind === "demo" && <span className="message-demo">SIMULATED</span>}
+                        </div>
+                        <div className="message-bubble">
+                          <p className="message-text">{message.text}</p>
+                        </div>
+                        {showQuickReplies ? (
+                          <div className="quick-replies" role="group" aria-label="پاسخ سریع">
+                            {visibleReplies.map((reply) => (
+                              <button
+                                key={reply.id}
+                                type="button"
+                                className={`quick-reply ${
+                                  reply.kind === "approve"
+                                    ? "quick-reply-primary"
+                                    : reply.kind === "reject"
+                                      ? "quick-reply-danger"
+                                      : ""
+                                }`}
+                                onClick={() => void handleQuickReply(reply)}
+                              >
+                                {reply.label}
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
                       </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
                 {loading && (
                   <div className="message-row assistant">
                     <div className="assistant-avatar"><Sparkles size={14} /></div>
                     <div className="message-stack">
                       <div className="message-meta">
                         <span>همراه لیارا</span>
-                        <span className="message-demo message-live">زنده</span>
                       </div>
                       <div className="message-bubble">
                         <div className="thinking-indicator"><span /><span /><span /> {strings.thinking}</div>
@@ -1602,10 +2233,155 @@ function App() {
             <div className="inline-error mx-auto max-w-3xl"><CircleHelp size={15} />{error}</div>
           )}
           <div className="composer-wrap">
+            {(contextFiles.length > 0 || contextServices.length > 0) && (
+              <div className="composer-context-chips">
+                {contextServices.map((service) => (
+                  <span className="composer-chip" key={`svc-${service.id}`}>
+                    <Server size={12} />
+                    <span>{service.name}</span>
+                    <button
+                      type="button"
+                      aria-label={`حذف ${service.name}`}
+                      onClick={() => removeContextService(service.id)}
+                    >
+                      <X size={11} />
+                    </button>
+                  </span>
+                ))}
+                {contextFiles.map((path) => (
+                  <span className="composer-chip" key={path} title={path}>
+                    <FilePlus2 size={12} />
+                    <span>{path.split(/[/\\]/).filter(Boolean).pop() || path}</span>
+                    <button
+                      type="button"
+                      aria-label="حذف فایل"
+                      onClick={() => removeContextFile(path)}
+                    >
+                      <X size={11} />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
             <form className="composer" onSubmit={handleSubmit}>
-              <button className="composer-plus" type="button" aria-label="افزودن زمینه" disabled={!hasLocalWorkspace}>
-                <Plus size={17} />
-              </button>
+              <div className="composer-attach-wrap" ref={attachWrapRef}>
+                <button
+                  className={`composer-plus ${attachOpen ? "active" : ""}`}
+                  type="button"
+                  aria-label={strings.attachMenu}
+                  aria-expanded={attachOpen}
+                  aria-haspopup="menu"
+                  disabled={!hasLocalWorkspace || pickingFile}
+                  onClick={() => {
+                    setAttachOpen((open) => !open);
+                    setAttachPanel("menu");
+                  }}
+                >
+                  <Plus size={17} />
+                </button>
+                {attachOpen && (
+                  <div className="composer-attach-popover" role="menu" aria-label={strings.attachMenu}>
+                    {attachPanel === "menu" ? (
+                      <>
+                        <div className="composer-attach-label">{strings.attachSkills}</div>
+                        {composerSkills(language).map((skill) => {
+                          const SkillIcon =
+                            skill.id === "logs-24h"
+                              ? ClipboardList
+                              : skill.id === "debug"
+                                ? Bug
+                                : Rocket;
+                          return (
+                            <button
+                              key={skill.id}
+                              type="button"
+                              className="composer-attach-item"
+                              role="menuitem"
+                              onClick={() => {
+                                setAttachOpen(false);
+                                void startOrchestratorGoal(skill.prompt);
+                              }}
+                            >
+                              <SkillIcon size={14} />
+                              <span>
+                                <strong>{skill.label}</strong>
+                                <small>{skill.hint}</small>
+                              </span>
+                            </button>
+                          );
+                        })}
+                        <div className="composer-attach-divider" />
+                        <button
+                          type="button"
+                          className="composer-attach-item"
+                          role="menuitem"
+                          disabled={pickingFile}
+                          onClick={() => void pickContextFile()}
+                        >
+                          <FilePlus2 size={14} />
+                          <span>
+                            <strong>{pickingFile ? strings.pickingFile : strings.attachFile}</strong>
+                            <small>{language === "fa" ? "افزودن مسیر فایل به زمینه" : "Add a local file path"}</small>
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          className="composer-attach-item"
+                          role="menuitem"
+                          onClick={() => setAttachPanel("services")}
+                        >
+                          <Server size={14} />
+                          <span>
+                            <strong>{strings.attachService}</strong>
+                            <small>
+                              {language === "fa"
+                                ? "برای زمینه این گفتگو"
+                                : "Attach to this chat context"}
+                            </small>
+                          </span>
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          className="composer-attach-back"
+                          onClick={() => setAttachPanel("menu")}
+                        >
+                          {strings.attachBack}
+                        </button>
+                        <div className="composer-attach-label">{strings.attachService}</div>
+                        {services.length === 0 ? (
+                          <p className="composer-attach-empty">{strings.noServices}</p>
+                        ) : (
+                          services.map((service) => {
+                            const active = contextServices.some((item) => item.id === service.id);
+                            return (
+                              <button
+                                key={service.id}
+                                type="button"
+                                className={`composer-attach-item ${active ? "active" : ""}`}
+                                role="menuitem"
+                                onClick={() => {
+                                  addContextService({ id: service.id, name: service.name });
+                                  setAttachOpen(false);
+                                  setAttachPanel("menu");
+                                }}
+                              >
+                                <Server size={14} />
+                                <span>
+                                  <strong>{service.name}</strong>
+                                  <small>{service.status}</small>
+                                </span>
+                              </button>
+                            );
+                          })
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
               <input
                 aria-label="پیام به همراه لیارا"
                 value={draft}
@@ -1614,10 +2390,6 @@ function App() {
                 disabled={loading || !hasLocalWorkspace}
               />
               <div className="composer-actions">
-                <button className="composer-tool" type="button" aria-label="جستجوی زمینه" disabled={!hasLocalWorkspace}>
-                  <Search size={15} />
-                </button>
-                <span className="composer-divider" />
                 <button
                   className="composer-send"
                   type="submit"
@@ -1643,6 +2415,8 @@ function App() {
           onOpenNav={() => setMobileNavOpen(true)}
           onViewChange={setSettingsView}
           onAfterMutate={() => void refreshCatalog()}
+          uiPreferences={uiPreferences}
+          onUiPreferencesChange={setUiPreferences}
         />
       );
     }
@@ -1662,7 +2436,7 @@ function App() {
         onOpenSettings={() => navigate("Settings")}
         onRefreshServices={() => void refreshCatalog()}
         onInvestigate={(service) => {
-          setSelectedServiceId(service.id);
+          addContextService({ id: service.id, name: service.name });
           void startOrchestratorGoal(
             language === "fa"
               ? `بررسی وضعیت سرویس ${service.name}`
@@ -1695,6 +2469,103 @@ function App() {
     <div className={`app-shell ${language === "fa" ? "rtl-mode" : ""}`} dir={language === "fa" ? "rtl" : "ltr"}>
       <AnimatePresence>
         {mobileNavOpen && <motion.button className="mobile-scrim" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setMobileNavOpen(false)} aria-label="بستن منو" />}
+      </AnimatePresence>
+      <AnimatePresence>
+        {renameDialogOpen && (
+          <motion.div
+            className="confirm-scrim"
+            role="presentation"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setRenameDialogOpen(false)}
+          >
+            <motion.div
+              className="confirm-dialog rename"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="rename-dialog-title"
+              initial={{ opacity: 0, y: 12, scale: 0.97 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 8, scale: 0.98 }}
+              transition={{ duration: 0.2, ease: [0.22, 0.75, 0.28, 1] }}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="confirm-dialog-icon" aria-hidden><Pencil size={18} /></div>
+              <h2 id="rename-dialog-title">{strings.renameTitleHeading}</h2>
+              <p>{strings.renameTitleBody}</p>
+              <input
+                autoFocus
+                value={titleDraft}
+                onChange={(event) => setTitleDraft(event.target.value)}
+                placeholder={strings.titlePlaceholder}
+                aria-label={strings.titlePlaceholder}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    void applyRenameTitle();
+                  }
+                }}
+              />
+              <div className="confirm-actions">
+                <button type="button" className="confirm-btn ghost" onClick={() => setRenameDialogOpen(false)}>
+                  {strings.cancel}
+                </button>
+                <button
+                  type="button"
+                  className="confirm-btn primary"
+                  disabled={!titleDraft.trim()}
+                  onClick={() => void applyRenameTitle()}
+                >
+                  {strings.renameTitleSave}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {deleteDialogOpen && (
+          <motion.div
+            className="confirm-scrim"
+            role="presentation"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setDeleteDialogOpen(false)}
+          >
+            <motion.div
+              className="confirm-dialog"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="delete-dialog-title"
+              initial={{ opacity: 0, y: 12, scale: 0.97 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 8, scale: 0.98 }}
+              transition={{ duration: 0.2, ease: [0.22, 0.75, 0.28, 1] }}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="confirm-dialog-icon" aria-hidden><Trash2 size={18} /></div>
+              <h2 id="delete-dialog-title">{strings.deleteConfirmHeading}</h2>
+              <p>
+                {strings.deleteConfirmBody}
+                {currentTitle ? ` «${currentTitle}»` : ""}
+              </p>
+              <div className="confirm-actions">
+                <button type="button" className="confirm-btn ghost" onClick={() => setDeleteDialogOpen(false)}>
+                  {strings.cancel}
+                </button>
+                <button
+                  type="button"
+                  className="confirm-btn danger"
+                  onClick={() => void confirmDeleteConversation()}
+                >
+                  {strings.deleteConfirmAction}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
       </AnimatePresence>
       <aside className={`sidebar ${mobileNavOpen ? "sidebar-open" : ""}`}>
         <div className="brand-row">
@@ -1800,6 +2671,14 @@ function App() {
         </div>
 
         <div className="sidebar-bottom">
+          <SidebarWalletBalances
+            workspaceId={companionWorkspaceId}
+            refreshKey={[
+              settingsView?.liara.token_configured ? "1" : "0",
+              settingsView?.aval.api_key_configured ? "1" : "0",
+              settingsView?.liara.team_id ?? "",
+            ].join(":")}
+          />
           <button
             type="button"
             className={`nav-item settings-nav ${activeNav === "Settings" ? "active" : ""}`}

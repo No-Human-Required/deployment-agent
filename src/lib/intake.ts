@@ -4,6 +4,7 @@
  */
 
 import { inferGoalIntent, type GoalIntent, type Locale } from "./requestTimeline";
+import { enrichPlatformOptions } from "./liaraPlatforms";
 
 export type IntakeKind =
   | "deploy"
@@ -22,14 +23,32 @@ export type IntakePlanOption = {
   id: string;
   label: string;
   hint?: string | null;
+  price_monthly?: number | null;
+  ram_gb?: number | null;
+  tier?: number;
+};
+
+export type IntakePlatformOption = {
+  id: string;
+  label: string;
+  hint?: string | null;
+  icon?: string | null;
 };
 
 export type IntakeDraft = {
   kind: IntakeKind;
   services: IntakeServiceOption[];
   plans: IntakePlanOption[];
+  platforms?: IntakePlatformOption[];
   require_plan: boolean;
   require_domain: boolean;
+  require_platform?: boolean;
+  /** Suggested Liara platform id from local readiness (user may change). */
+  suggested_platform?: string | null;
+  /** Suggested new service name from folder (deploy). */
+  suggested_service_name?: string | null;
+  /** Prefer creating a new service instead of picking an existing one. */
+  prefer_new_service?: boolean;
   load_error?: string | null;
 };
 
@@ -37,6 +56,7 @@ export type IntakeSelection = {
   kind: IntakeKind;
   project_name: string;
   plan_id?: string;
+  platform?: string;
   domain_name?: string;
   app_path?: string | null;
 };
@@ -66,17 +86,39 @@ export function needsIntake(goal: string): boolean {
 export function intakeRequirements(kind: IntakeKind): {
   require_plan: boolean;
   require_domain: boolean;
+  require_platform: boolean;
+  prefer_new_service: boolean;
 } {
   switch (kind) {
     case "deploy":
-      return { require_plan: true, require_domain: false };
+      return {
+        require_plan: true,
+        require_domain: false,
+        require_platform: true,
+        prefer_new_service: true,
+      };
     case "ops_resize":
-      return { require_plan: true, require_domain: false };
+      return {
+        require_plan: true,
+        require_domain: false,
+        require_platform: false,
+        prefer_new_service: false,
+      };
     case "domain":
-      return { require_plan: false, require_domain: true };
+      return {
+        require_plan: false,
+        require_domain: true,
+        require_platform: false,
+        prefer_new_service: false,
+      };
     case "troubleshoot":
     case "maintain_monitor":
-      return { require_plan: false, require_domain: false };
+      return {
+        require_plan: false,
+        require_domain: false,
+        require_platform: false,
+        prefer_new_service: false,
+      };
   }
 }
 
@@ -92,9 +134,11 @@ export function buildPlanPayloads(selection: IntakeSelection): {
   const domain = selection.domain_name?.trim();
 
   if (selection.kind === "deploy") {
+    const platform = selection.platform?.trim();
     const deploy: Record<string, unknown> = {
       project_name: project,
       ...(planId ? { plan_id: planId } : {}),
+      ...(platform ? { platform } : {}),
       ...(appPath ? { app_path: appPath } : {}),
     };
     return { deploy };
@@ -129,7 +173,7 @@ export function intakeAssistantPrompt(kind: IntakeKind, language: Locale): strin
   if (language === "fa") {
     switch (kind) {
       case "deploy":
-        return "برای ادامه، سرویس لیارا و پلن را انتخاب کنید. پس از تأیید شما، طرح نوشته می‌شود و هنوز اجرایی انجام نمی‌شود.";
+        return "می‌توانید سرویس جدید بسازید یا یکی از موجودها را انتخاب کنید؛ پلتفرم از روی پروژه پیشنهاد می‌شود و پلن را هم مشخص کنید. پس از تأیید شما طرح نوشته می‌شود — هنوز اجرایی نیست.";
       case "ops_resize":
         return "سرویس و پلن جدید را انتخاب کنید. تغییر پلن فقط بعد از تأیید شما اجرا می‌شود.";
       case "domain":
@@ -142,7 +186,7 @@ export function intakeAssistantPrompt(kind: IntakeKind, language: Locale): strin
   }
   switch (kind) {
     case "deploy":
-      return "Choose the Liara service and plan to continue. I’ll draft a plan next — nothing runs until you Approve.";
+      return "Create a new Liara service or pick an existing one; platform is suggested from your project and you can change it. Then choose a plan — I’ll draft next; nothing runs until Approve.";
     case "ops_resize":
       return "Pick the service and the new plan. Resize only runs after you Approve.";
     case "domain":
@@ -158,7 +202,7 @@ export function intakeCardTitle(kind: IntakeKind, language: Locale): string {
   if (language === "fa") {
     switch (kind) {
       case "deploy":
-        return "انتخاب سرویس و پلن";
+        return "سرویس، پلتفرم و پلن";
       case "ops_resize":
         return "تغییر پلن سرویس";
       case "domain":
@@ -171,7 +215,7 @@ export function intakeCardTitle(kind: IntakeKind, language: Locale): string {
   }
   switch (kind) {
     case "deploy":
-      return "Choose service & plan";
+      return "Service, platform & plan";
     case "ops_resize":
       return "Resize service plan";
     case "domain":
@@ -195,12 +239,20 @@ export function toIntakeViewPayload(
     prompt: string;
     services: IntakeServiceOption[];
     plans: IntakePlanOption[];
+    platforms: IntakePlatformOption[];
     require_plan: boolean;
     require_domain: boolean;
+    require_platform: boolean;
+    suggested_platform: string | null;
+    suggested_service_name: string | null;
+    prefer_new_service: boolean;
     load_error: string | null;
     settings_cta: boolean;
   };
 } {
+  const platforms = draft.require_platform
+    ? enrichPlatformOptions(draft.platforms)
+    : [];
   return {
     type: "intake",
     data: {
@@ -209,8 +261,13 @@ export function toIntakeViewPayload(
       prompt: intakeAssistantPrompt(draft.kind, language),
       services: draft.services,
       plans: draft.plans,
+      platforms,
       require_plan: draft.require_plan,
       require_domain: draft.require_domain,
+      require_platform: Boolean(draft.require_platform),
+      suggested_platform: draft.suggested_platform ?? null,
+      suggested_service_name: draft.suggested_service_name ?? null,
+      prefer_new_service: Boolean(draft.prefer_new_service),
       load_error: draft.load_error ?? null,
       settings_cta: Boolean(draft.load_error),
     },

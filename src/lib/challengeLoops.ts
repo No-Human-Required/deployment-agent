@@ -36,7 +36,7 @@ export function isConversationalGoal(goal: string): boolean {
   if (intent !== "generic") return false;
   // Short generic prompts without ops keywords stay conversational.
   if (text.length > 80) return false;
-  return !/(deploy|دیپلوی|استقرار|سرویس|پروژه|دامنه|domain|لاگ|log|خطا|error|500|restart|resize|پایش|monitor|عیب|debug|troubleshoot)/i.test(
+  return !/(deploy|دیپلوی|دپلوی|استقرار|سرویس|پروژه|دامنه|domain|لاگ|log|خطا|error|500|restart|resize|پایش|monitor|عیب|debug|troubleshoot)/i.test(
     text,
   );
 }

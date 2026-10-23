@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildPlanPayloads,
   intakeKindForGoalIntent,
+  intakeRequirements,
   needsIntake,
   resolveIntakeKind,
   toIntakeViewPayload,
@@ -37,20 +38,31 @@ describe("GenUI intake helpers", () => {
     );
   });
 
-  it("builds deploy payload with workspace app_path", () => {
+  it("builds deploy payload with workspace app_path and platform", () => {
     const payloads = buildPlanPayloads({
       kind: "deploy",
       project_name: "my-app",
       plan_id: "free",
+      platform: "node",
       app_path: "/Users/me/project",
     });
     expect(payloads.deploy).toEqual({
       project_name: "my-app",
       plan_id: "free",
+      platform: "node",
       app_path: "/Users/me/project",
     });
     expect(payloads.ops).toBeUndefined();
     expect(payloads.deps).toBeUndefined();
+  });
+
+  it("marks deploy intake as prefer-new-service with platform required", () => {
+    expect(intakeRequirements("deploy")).toEqual({
+      require_plan: true,
+      require_domain: false,
+      require_platform: true,
+      prefer_new_service: true,
+    });
   });
 
   it("builds domain and resize ops payloads without inventing app_path", () => {

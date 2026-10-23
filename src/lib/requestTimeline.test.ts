@@ -21,6 +21,8 @@ describe("inferGoalIntent", () => {
   it("distinguishes deploy, troubleshoot, and domain goals", () => {
     expect(inferGoalIntent("Deploy my Node app to Liara")).toBe("deploy");
     expect(inferGoalIntent("استقرار اولین نسخه")).toBe("deploy");
+    expect(inferGoalIntent("سلام من میخوام دپلوی کنم")).toBe("deploy");
+    expect(inferGoalIntent("می‌خوام دیپلوی کنم")).toBe("deploy");
     expect(inferGoalIntent("Investigate HTTP 500 errors")).toBe("troubleshoot");
     expect(inferGoalIntent("رفع خطای ۵۰۰")).toBe("troubleshoot");
     expect(inferGoalIntent("Connect custom domain and SSL")).toBe("domain");

@@ -1,6 +1,7 @@
 from app.models.audit import AuditEvent
 from app.models.capability import Capability
 from app.models.case import Case
+from app.models.conversation import ConversationThread, WorkspaceFolder
 from app.models.maintain import Incident, Monitor, RecoveryBaseline, WorkspaceMember
 from app.models.secret import SecretRef
 from app.models.settings import WorkspaceSettings
@@ -12,6 +13,7 @@ __all__ = [
     "AuditEvent",
     "Capability",
     "Case",
+    "ConversationThread",
     "Incident",
     "Monitor",
     "Operation",
@@ -19,6 +21,7 @@ __all__ = [
     "RecoveryBaseline",
     "SecretRef",
     "Workspace",
+    "WorkspaceFolder",
     "WorkspaceMember",
     "WorkspaceSettings",
 ]

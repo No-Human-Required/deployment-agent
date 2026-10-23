@@ -45,6 +45,13 @@ describe("challenge loop routing", () => {
       intakeKind: "deploy",
       projectHint: undefined,
     });
+    // Common informal Persian spelling without ی after د
+    expect(resolveChallengeLoopRoute("سلام من میخوام دپلوی کنم")).toEqual({
+      area: "setup_deploy",
+      mode: "intake",
+      intakeKind: "deploy",
+      projectHint: undefined,
+    });
     expect(resolveChallengeLoopRoute("Attach a custom domain to service web-app")).toMatchObject({
       area: "domains",
       mode: "intake",

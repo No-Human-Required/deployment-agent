@@ -71,6 +71,7 @@ class ReadinessAssessment(BaseModel):
     open_needs: list[str] = Field(default_factory=list)
     notes: str | None = None
     platform: str | None = None
+    package_name: str | None = None
     findings: list[FindingPayload] = Field(default_factory=list)
     detected_port: int | None = None
     start_script: str | None = None

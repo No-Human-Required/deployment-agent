@@ -30,6 +30,7 @@ import {
 import { motion } from "motion/react";
 import { useState, type ReactNode } from "react";
 import type { ApprovalResult, ViewPayload } from "../../lib/schemas";
+import { sortPlansWeakToStrong } from "../../lib/sortPlans";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 
@@ -38,8 +39,37 @@ type Locale = "en" | "fa";
 export type IntakeConfirmValues = {
   project_name: string;
   plan_id?: string;
+  platform?: string;
   domain_name?: string;
 };
+
+function formatTomans(value: number | null | undefined, language: Locale): string {
+  if (value == null || Number.isNaN(value)) {
+    return language === "fa" ? "قیمت نامشخص" : "Price n/a";
+  }
+  const rounded = Math.round(value);
+  const formatted = new Intl.NumberFormat(language === "fa" ? "fa-IR" : "en-US").format(rounded);
+  return language === "fa" ? `${formatted} تومان / ماه` : `${formatted} Tomans/mo`;
+}
+
+function PlanTierIcon({ tier }: { tier: number }) {
+  const bars = Math.min(4, Math.max(1, tier <= 2 ? 1 : tier <= 4 ? 2 : tier <= 6 ? 3 : 4));
+  return (
+    <svg className="plan-tier-icon" viewBox="0 0 24 24" width="22" height="22" aria-hidden>
+      {[0, 1, 2, 3].map((index) => (
+        <rect
+          key={index}
+          x={3 + index * 5}
+          y={18 - (index + 1) * 3.5}
+          width="3.5"
+          height={(index + 1) * 3.5}
+          rx="1"
+          fill={index < bars ? "currentColor" : "rgba(148,163,184,.35)"}
+        />
+      ))}
+    </svg>
+  );
+}
 
 type Props = {
   payload: ViewPayload;
@@ -83,13 +113,18 @@ const cardCopy = {
     intakeConfirm: "Continue",
     intakeService: "Service",
     intakePlan: "Plan",
+    intakePlatform: "Platform",
     intakeDomain: "Domain name",
-    intakeNewService: "New service name",
-    intakeEmptyServices: "No services found. Enter a new service name or check Settings.",
+    intakeNewService: "New service",
+    intakeNewServiceName: "New service name",
+    intakeExistingService: "Existing service",
+    intakeEmptyServices: "No existing services — enter a new name, or check Settings.",
+    intakeSuggested: "Suggested from your project",
     intakeLoadError: "Could not load Liara catalog",
     openSettings: "Open Settings",
     intakeSelectService: "Select a service",
-    intakeSelectPlan: "Select a plan",
+    intakeSelectPlan: "Choose a plan",
+    intakeSelectPlatform: "Choose a platform",
     intakeEnterDomain: "Enter a domain (e.g. example.com)",
   },
   fa: {
@@ -121,13 +156,18 @@ const cardCopy = {
     intakeConfirm: "ادامه",
     intakeService: "سرویس",
     intakePlan: "پلن",
+    intakePlatform: "پلتفرم",
     intakeDomain: "نام دامنه",
-    intakeNewService: "نام سرویس جدید",
-    intakeEmptyServices: "سرویسی پیدا نشد. نام جدید وارد کنید یا تنظیمات را بررسی کنید.",
+    intakeNewService: "سرویس جدید",
+    intakeNewServiceName: "نام سرویس جدید",
+    intakeExistingService: "سرویس موجود",
+    intakeEmptyServices: "سرویس موجودی نیست — نام جدید وارد کنید یا تنظیمات را بررسی کنید.",
+    intakeSuggested: "پیشنهاد بر اساس پروژه شما",
     intakeLoadError: "بارگذاری فهرست لیارا ناموفق بود",
     openSettings: "باز کردن تنظیمات",
     intakeSelectService: "یک سرویس انتخاب کنید",
     intakeSelectPlan: "یک پلن انتخاب کنید",
+    intakeSelectPlatform: "یک پلتفرم انتخاب کنید",
     intakeEnterDomain: "دامنه را وارد کنید (مثلاً example.com)",
   },
 };
@@ -177,9 +217,21 @@ type IntakeData = {
   title: string;
   prompt?: string | null;
   services: { id: string; name: string; status?: string }[];
-  plans: { id: string; label: string; hint?: string | null }[];
+  plans: {
+    id: string;
+    label: string;
+    hint?: string | null;
+    price_monthly?: number | null;
+    ram_gb?: number | null;
+    tier?: number;
+  }[];
+  platforms?: { id: string; label: string; hint?: string | null; icon?: string | null }[];
   require_plan: boolean;
   require_domain: boolean;
+  require_platform?: boolean;
+  suggested_platform?: string | null;
+  suggested_service_name?: string | null;
+  prefer_new_service?: boolean;
   load_error?: string | null;
   settings_cta: boolean;
 };
@@ -201,20 +253,30 @@ function IntakeCard({
   onConfirm?: (values: IntakeConfirmValues) => void;
   onOpenSettings?: () => void;
 }) {
+  const preferNew = Boolean(data.prefer_new_service) || data.services.length === 0;
+  const [serviceMode, setServiceMode] = useState<"new" | "existing">(
+    preferNew ? "new" : "existing",
+  );
   const [serviceId, setServiceId] = useState(data.services[0]?.id ?? "");
-  const [customName, setCustomName] = useState("");
-  const [planId, setPlanId] = useState(data.plans[0]?.id ?? "");
+  const [customName, setCustomName] = useState(data.suggested_service_name?.trim() || "");
+  const [planId, setPlanId] = useState(
+    () => sortPlansWeakToStrong(data.plans)[0]?.id ?? "",
+  );
+  const [platformId, setPlatformId] = useState(
+    data.suggested_platform || data.platforms?.[0]?.id || "",
+  );
   const [domainName, setDomainName] = useState("");
   const interactive = Boolean(pending && onConfirm);
 
   const projectName =
-    data.services.length > 0
-      ? data.services.find((s) => s.id === serviceId)?.name || serviceId
-      : customName.trim();
+    serviceMode === "new"
+      ? customName.trim()
+      : data.services.find((s) => s.id === serviceId)?.name || serviceId;
 
   const canSubmit =
     Boolean(projectName) &&
     (!data.require_plan || Boolean(planId)) &&
+    (!data.require_platform || Boolean(platformId)) &&
     (!data.require_domain || Boolean(domainName.trim()));
 
   const Icon =
@@ -228,12 +290,12 @@ function IntakeCard({
     <EnterCard>
       <Card className="genui-card intake-card">
         <Heading icon={Icon} title={data.title} />
-        {data.prompt ? <p className="text-sm leading-relaxed text-slate-300">{data.prompt}</p> : null}
+        {data.prompt ? <p className="text-sm leading-relaxed text-slate-600">{data.prompt}</p> : null}
 
         {data.load_error ? (
-          <div className="mt-2.5 rounded-lg border border-amber-400/25 bg-amber-400/[.06] p-2.5 text-xs text-amber-100/85">
-            <p className="font-medium">{strings.intakeLoadError}</p>
-            <p className="mt-1 text-amber-100/70">{data.load_error}</p>
+          <div className="warn-callout mt-2.5 p-2.5">
+            <p className="warn-callout-title">{strings.intakeLoadError}</p>
+            <p className="warn-callout-body">{data.load_error}</p>
             {data.settings_cta && onOpenSettings ? (
               <Button variant="ghost" size="sm" className="mt-2" onClick={onOpenSettings} type="button">
                 <Settings2 size={14} /> {strings.openSettings}
@@ -245,21 +307,58 @@ function IntakeCard({
         <div className="mt-3 space-y-3">
           <div>
             <p className="text-[11px] uppercase tracking-wide text-slate-500">{strings.intakeService}</p>
-            {data.services.length > 0 ? (
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+              <button
+                type="button"
+                className={`intake-chip ${serviceMode === "new" ? "is-active" : ""}`}
+                disabled={!interactive || busy}
+                onClick={() => {
+                  setServiceMode("new");
+                  if (!customName.trim() && data.suggested_service_name) {
+                    setCustomName(data.suggested_service_name);
+                  }
+                }}
+              >
+                {strings.intakeNewService}
+              </button>
+              {data.services.length > 0 ? (
+                <button
+                  type="button"
+                  className={`intake-chip ${serviceMode === "existing" ? "is-active" : ""}`}
+                  disabled={!interactive || busy}
+                  onClick={() => setServiceMode("existing")}
+                >
+                  {strings.intakeExistingService}
+                </button>
+              ) : null}
+            </div>
+
+            {serviceMode === "new" ? (
+              <>
+                {data.services.length === 0 ? (
+                  <p className="mt-1.5 text-[11px] text-slate-500">{strings.intakeEmptyServices}</p>
+                ) : null}
+                <input
+                  className="intake-input mt-1.5"
+                  value={customName}
+                  disabled={!interactive || busy}
+                  placeholder={strings.intakeNewServiceName}
+                  aria-label={strings.intakeNewServiceName}
+                  dir="ltr"
+                  onChange={(event) => setCustomName(event.target.value)}
+                />
+              </>
+            ) : (
               <div className="mt-1.5 max-h-40 space-y-1 overflow-auto">
                 {data.services.map((service) => (
                   <label
                     key={service.id}
-                    className={`flex cursor-pointer items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs ${
-                      serviceId === service.id
-                        ? "border-sky-400/40 bg-sky-400/[.08] text-slate-100"
-                        : "border-white/[.07] bg-black/20 text-slate-300"
-                    }`}
+                    className={`intake-radio-row ${serviceId === service.id ? "is-active" : ""}`}
                   >
                     <input
                       type="radio"
                       name="intake-service"
-                      className="accent-sky-400"
+                      className="accent-sky-600"
                       checked={serviceId === service.id}
                       disabled={!interactive || busy}
                       onChange={() => setServiceId(service.id)}
@@ -271,49 +370,95 @@ function IntakeCard({
                   </label>
                 ))}
               </div>
-            ) : (
-              <>
-                <p className="mt-1 text-[11px] text-slate-500">{strings.intakeEmptyServices}</p>
-                <input
-                  className="intake-input mt-1.5"
-                  value={customName}
-                  disabled={!interactive || busy}
-                  placeholder={strings.intakeNewService}
-                  aria-label={strings.intakeNewService}
-                  onChange={(event) => setCustomName(event.target.value)}
-                />
-              </>
             )}
           </div>
+
+          {data.require_platform ? (
+            <div>
+              <p className="text-[11px] uppercase tracking-wide text-slate-500">{strings.intakePlatform}</p>
+              {data.suggested_platform ? (
+                <p className="mt-1 text-[11px] text-sky-700">
+                  {strings.intakeSuggested}
+                  {": "}
+                  <span className="font-medium" dir="ltr">
+                    {(data.platforms ?? []).find((p) => p.id === data.suggested_platform)?.label ||
+                      data.suggested_platform}
+                  </span>
+                </p>
+              ) : null}
+              <div className="intake-platform-grid mt-1.5" role="radiogroup" aria-label={strings.intakeSelectPlatform}>
+                {(data.platforms ?? []).map((platform) => {
+                  const active = platformId === platform.id;
+                  const suggested = data.suggested_platform === platform.id;
+                  const iconSrc = platform.icon || `/platform-icons/${platform.id}.svg`;
+                  return (
+                    <label
+                      key={platform.id}
+                      className={`intake-platform-tile ${active ? "is-active" : ""} ${suggested ? "is-suggested" : ""}`}
+                    >
+                      <input
+                        type="radio"
+                        name="intake-platform"
+                        className="sr-only"
+                        checked={active}
+                        disabled={!interactive || busy}
+                        onChange={() => setPlatformId(platform.id)}
+                      />
+                      <img
+                        src={iconSrc}
+                        alt=""
+                        className="intake-platform-icon"
+                        width={28}
+                        height={28}
+                        onError={(event) => {
+                          const el = event.currentTarget;
+                          if (el.dataset.fallback === "1") {
+                            el.style.visibility = "hidden";
+                            return;
+                          }
+                          el.dataset.fallback = "1";
+                          el.src = `/platform-icons/${platform.id === "node" ? "nodejs" : platform.id}.svg`;
+                        }}
+                      />
+                      <span className="intake-platform-name">{platform.label}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
 
           {data.require_plan ? (
             <div>
               <p className="text-[11px] uppercase tracking-wide text-slate-500">{strings.intakePlan}</p>
-              {data.plans.length > 0 ? (
-                <select
-                  className="intake-input mt-1.5"
-                  value={planId}
-                  disabled={!interactive || busy}
-                  aria-label={strings.intakeSelectPlan}
-                  onChange={(event) => setPlanId(event.target.value)}
-                >
-                  {data.plans.map((plan) => (
-                    <option key={plan.id} value={plan.id}>
-                      {plan.label}
-                      {plan.hint ? ` — ${plan.hint}` : ""}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <input
-                  className="intake-input mt-1.5"
-                  value={planId}
-                  disabled={!interactive || busy}
-                  placeholder={strings.intakeSelectPlan}
-                  aria-label={strings.intakeSelectPlan}
-                  onChange={(event) => setPlanId(event.target.value)}
-                />
-              )}
+              <div className="intake-plan-grid mt-1.5" role="radiogroup" aria-label={strings.intakeSelectPlan}>
+                {sortPlansWeakToStrong(data.plans).map((plan, index) => {
+                  const active = planId === plan.id;
+                  const tier = plan.tier ?? index + 1;
+                  return (
+                    <label key={plan.id} className={`intake-plan-tile ${active ? "is-active" : ""}`}>
+                      <input
+                        type="radio"
+                        name="intake-plan"
+                        className="sr-only"
+                        checked={active}
+                        disabled={!interactive || busy}
+                        onChange={() => setPlanId(plan.id)}
+                      />
+                      <span className="intake-plan-icon-wrap">
+                        <PlanTierIcon tier={tier} />
+                      </span>
+                      <span className="intake-plan-copy">
+                        <span className="intake-plan-name" dir="ltr">
+                          {plan.label}
+                        </span>
+                        {plan.hint ? <span className="intake-plan-hint">{plan.hint}</span> : null}
+                        <span className="intake-plan-price">{formatTomans(plan.price_monthly, language)}</span>
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
             </div>
           ) : null}
 
@@ -345,6 +490,7 @@ function IntakeCard({
                 onConfirm({
                   project_name: projectName,
                   ...(data.require_plan && planId ? { plan_id: planId } : {}),
+                  ...(data.require_platform && platformId ? { platform: platformId } : {}),
                   ...(data.require_domain && domainName.trim()
                     ? { domain_name: domainName.trim() }
                     : {}),
@@ -481,7 +627,7 @@ export function GenerativeCard({
               <Card className="metric-card" key={metric.name}>
                 <div className="flex items-center justify-between text-[11px] text-slate-500">
                   <span>{metric.name}</span>
-                  <span className={increase ? "text-amber-300" : "text-emerald-300"}>
+                  <span className={increase ? "warn-note font-medium" : "font-medium text-emerald-700"}>
                     {increase ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
                   </span>
                 </div>
@@ -586,8 +732,8 @@ export function GenerativeCard({
                   <p className="text-xs text-slate-500">{strings.proposedAction}</p>
                   <p className="mt-1 text-sm font-medium text-white">{payload.data.action}</p>
                 </div>
-                <div className="mt-2.5 flex gap-2 text-xs leading-relaxed text-amber-100/75">
-                  <ShieldAlert className="mt-0.5 shrink-0 text-amber-300" size={14} />
+                <div className="warn-callout-inline mt-2.5">
+                  <ShieldAlert className="mt-0.5 shrink-0" size={14} />
                   <span>{payload.data.risk}</span>
                 </div>
                 {pending && onApproval ? (
@@ -723,7 +869,7 @@ export function GenerativeCard({
               ))}
             </div>
             {payload.data.open_needs.length > 0 ? (
-              <p className="mt-2.5 text-[11px] text-amber-100/70">{payload.data.open_needs.join(" · ")}</p>
+              <p className="warn-note mt-2.5 text-[11px]">{payload.data.open_needs.join(" · ")}</p>
             ) : null}
           </Card>
         </EnterCard>
@@ -775,7 +921,7 @@ export function GenerativeCard({
               <div><span className="detail-label">Stale</span><p className="mt-1 text-slate-300">{String(payload.data.stale)}</p></div>
             </div>
             {!payload.data.grants_write_permission ? (
-              <p className="mt-2.5 text-[11px] text-amber-100/70">{strings.monitorNoWrite}</p>
+              <p className="warn-note mt-2.5 text-[11px]">{strings.monitorNoWrite}</p>
             ) : null}
           </Card>
         </EnterCard>
@@ -792,7 +938,7 @@ export function GenerativeCard({
             <p className="text-sm font-medium text-white">{payload.data.title}</p>
             <p className="mt-1 text-[11px] text-slate-500">alerts · {payload.data.alert_count}</p>
             {!payload.data.write_authorized ? (
-              <p className="mt-2.5 text-[11px] text-amber-100/70">{strings.writeNotAuthorized}</p>
+              <p className="warn-note mt-2.5 text-[11px]">{strings.writeNotAuthorized}</p>
             ) : null}
           </Card>
         </EnterCard>

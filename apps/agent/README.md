@@ -34,6 +34,10 @@ cd apps/agent
 uv run pytest
 ```
 
+Pytest uses **`liara_companion_test`** only (never `DATABASE_URL` / `liara_companion`).
+It refuses protected DB names so local Settings secrets and conversations stay intact.
+Override with `TEST_DATABASE_URL` if needed (name must end in `_test`).
+
 ## Run
 
 ```sh

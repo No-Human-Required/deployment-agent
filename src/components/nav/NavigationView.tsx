@@ -146,7 +146,8 @@ const labels = {
   en: {
     newChat: "New chat",
     refresh: "Refresh",
-    live: "LIVE",
+    connected: "Connected",
+    setup: "Needs setup",
     loading: "Loading…",
     retry: "Retry",
     openSettings: "Open Settings",
@@ -191,7 +192,8 @@ const labels = {
   fa: {
     newChat: "گفتگوی جدید",
     refresh: "بازنشانی",
-    live: "زنده",
+    connected: "متصل",
+    setup: "نیاز به پیکربندی",
     loading: "در حال بارگذاری…",
     retry: "تلاش دوباره",
     openSettings: "باز کردن تنظیمات",
@@ -416,12 +418,8 @@ export function NavigationView({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- project / catalog drive reload
   }, [activeNav, domainProject, services, workspaceId, tokenConfigured]);
 
-  const topbarMode =
-    tokenConfigured || activeNav === "Agent History"
-      ? "topbar-mode topbar-mode-live"
-      : "topbar-mode";
-
-  const topbarLabel = t.live;
+  const connectionOk = tokenConfigured || activeNav === "Agent History";
+  const topbarLabel = connectionOk ? t.connected : t.setup;
 
   function renderServices() {
     if (!tokenConfigured) {
@@ -867,8 +865,12 @@ export function NavigationView({
           </span>
           <span className="text-sm font-medium text-slate-200">{content.title}</span>
         </div>
-        <span className={`logical-end ${topbarMode}`}>
-          <span /> {topbarLabel}
+        <span
+          className={`logical-end connection-chip ${connectionOk ? "connection-chip-ok" : "connection-chip-warn"}`}
+          title={topbarLabel}
+        >
+          <span className="connection-chip-dot" aria-hidden />
+          <span>{topbarLabel}</span>
         </span>
       </header>
       <div className="nav-view-content">

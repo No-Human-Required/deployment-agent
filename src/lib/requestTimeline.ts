@@ -70,7 +70,7 @@ export function inferGoalIntent(goal: string): GoalIntent {
     return "maintain";
   }
   if (
-    /استقرار|دیپلوی|deploy|release|انتشار|راه‌اندازی|setup|نصب|first deploy|اولین/.test(g)
+    /استقرار|دیپلوی|دپلوی|deploy|release|انتشار|راه‌اندازی|setup|نصب|first deploy|اولین/.test(g)
   ) {
     return "deploy";
   }

@@ -5,20 +5,30 @@ import {
   Globe2,
   LoaderCircle,
   Menu,
+  MessageSquareReply,
+  RotateCcw,
   Save,
   ShieldCheck,
   Sparkles,
   Zap,
 } from "lucide-react";
 import {
+  getAccountBalances,
   proveLiaraRead,
   proveLlmConnection,
   saveSettings,
+  type AccountBalances,
   type SettingsUpdateBody,
 } from "../lib/api";
 import type { SettingsView } from "../lib/schemas";
+import { patchUiPreferences, type UiPreferences } from "../lib/uiPreferences";
 import { Button } from "./ui/button";
 import { Card } from "./ui/card";
+
+function formatIrt(value: number | null | undefined): string {
+  if (value == null || Number.isNaN(value)) return "—";
+  return `${new Intl.NumberFormat("fa-IR").format(Math.round(value))} تومان`;
+}
 
 const DEFAULT_LIARA_BASE = "https://api.liara.ir";
 const DEFAULT_AI_BASE = "https://api.avalai.ir/v1";
@@ -33,11 +43,13 @@ type SettingsPanelProps = {
   onOpenNav?: () => void;
   onViewChange: (view: SettingsView) => void;
   onAfterMutate?: () => void | Promise<void>;
+  uiPreferences: UiPreferences;
+  onUiPreferencesChange: (next: UiPreferences) => void;
 };
 
 const t = {
   title: "تنظیمات",
-  live: "حالت زنده",
+  connected: "متصل",
   setup: "نیاز به پیکربندی",
   liaraEyebrow: "اتصال لیارا",
   liaraHint:
@@ -45,6 +57,14 @@ const t = {
   aiEyebrow: "Aval AI",
   aiHint:
     "کلید Aval هم روی سرور می‌ماند و برنمی‌گردد. وضعیت «پیکربندی‌شده» یعنی ذخیره شده؛ فیلد خالی طبیعی است. اگر prove خطای 401 داد کلید را عوض کنید، نه اینکه هر بار از نو بسازید.",
+  chatEyebrow: "گفتگو",
+  chatHint: "ترجیحات رابط؛ فقط روی همین مرورگر ذخیره می‌شوند.",
+  resumeConversation: "بازگشت به مکالمه بعد از رفرش",
+  resumeConversationHint:
+    "اگر صفحه را تازه کنید، آخرین مکالمهٔ باز دوباره بارگذاری می‌شود.",
+  quickReplies: "پاسخ‌های سریع در چت",
+  quickRepliesHint:
+    "بعد از پایان یک درخواست، میانبرهایی مثل «دیپلوی» یا «عیب‌یابی» نشان داده می‌شود — نه وقتی کارت GenUI منتظر شماست.",
   baseUrl: "آدرس پایه API",
   teamId: "شناسه تیم",
   teamPlaceholder: "اختیاری — به‌صورت teamID ارسال می‌شود",
@@ -96,6 +116,8 @@ export function SettingsPanel({
   onOpenNav,
   onViewChange,
   onAfterMutate,
+  uiPreferences,
+  onUiPreferencesChange,
 }: SettingsPanelProps) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -106,6 +128,12 @@ export function SettingsPanel({
   const [aiBaseUrl, setAiBaseUrl] = useState(DEFAULT_AI_BASE);
   const [aiModel, setAiModel] = useState(DEFAULT_AI_MODEL);
   const [aiKey, setAiKey] = useState("");
+  const [balances, setBalances] = useState<AccountBalances | null>(null);
+  const [balancesBusy, setBalancesBusy] = useState(false);
+
+  function updateUiPref<K extends keyof UiPreferences>(key: K, value: UiPreferences[K]) {
+    onUiPreferencesChange(patchUiPreferences({ [key]: value }));
+  }
 
   useEffect(() => {
     if (!settingsView) return;
@@ -117,6 +145,30 @@ export function SettingsPanel({
     setAiModel(draft.aiModel);
     setAiKey(draft.aiKey);
   }, [settingsView]);
+
+  useEffect(() => {
+    if (loadState !== "ready" || !settingsView?.workspace_id) return;
+    let cancelled = false;
+    setBalancesBusy(true);
+    void getAccountBalances(settingsView.workspace_id)
+      .then((result) => {
+        if (!cancelled) setBalances(result);
+      })
+      .catch(() => {
+        if (!cancelled) setBalances(null);
+      })
+      .finally(() => {
+        if (!cancelled) setBalancesBusy(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    loadState,
+    settingsView?.workspace_id,
+    settingsView?.liara.token_configured,
+    settingsView?.aval.api_key_configured,
+  ]);
 
   async function handleSave(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -194,12 +246,42 @@ export function SettingsPanel({
           </span>
           <span className="truncate text-sm font-medium text-slate-200">{t.title}</span>
         </div>
-        <span className={`logical-end topbar-mode ${configured ? "topbar-mode-live" : ""}`}>
-          <span /> {configured ? t.live : t.setup}
+        <span
+          className={`logical-end connection-chip ${configured ? "connection-chip-ok" : "connection-chip-warn"}`}
+          title={configured ? t.connected : t.setup}
+        >
+          <span className="connection-chip-dot" aria-hidden />
+          <span>{configured ? t.connected : t.setup}</span>
         </span>
       </header>
 
       <div className="settings-body">
+        {loadState === "ready" ? (
+          <div className="settings-balance-row" aria-live="polite">
+            <Card className="settings-card settings-balance-card">
+              <p className="settings-balance-label">موجودی لیارا</p>
+              <p className="settings-balance-value" dir="ltr">
+                {balancesBusy ? "…" : formatIrt(balances?.liara.balance)}
+              </p>
+              {balances?.liara.team_name ? (
+                <p className="settings-balance-meta">{balances.liara.team_name}</p>
+              ) : null}
+              {balances?.liara.error ? (
+                <p className="settings-balance-error">خواندن موجودی ممکن نشد</p>
+              ) : null}
+            </Card>
+            <Card className="settings-card settings-balance-card">
+              <p className="settings-balance-label">موجودی Aval AI</p>
+              <p className="settings-balance-value" dir="ltr">
+                {balancesBusy ? "…" : formatIrt(balances?.aval.remaining_irt)}
+              </p>
+              {balances?.aval.error ? (
+                <p className="settings-balance-error">خواندن اعتبار ممکن نشد</p>
+              ) : null}
+            </Card>
+          </div>
+        ) : null}
+
         {loadState === "loading" ? (
           <Card className="nav-detail-card nav-state-card nav-state-loading settings-card" aria-busy="true">
             <div className="ui-loading-row" role="status">
@@ -265,6 +347,45 @@ export function SettingsPanel({
                     {t.labelPrefix}: {settingsView.liara.token_label}
                   </p>
                 ) : null}
+              </section>
+
+              <section className="settings-section" aria-labelledby="settings-chat-heading">
+                <div className="section-eyebrow" id="settings-chat-heading">
+                  {t.chatEyebrow}
+                </div>
+                <p className="mb-3 text-xs leading-relaxed text-slate-500">{t.chatHint}</p>
+                <label className="settings-toggle">
+                  <input
+                    type="checkbox"
+                    checked={uiPreferences.resumeConversationOnRefresh}
+                    onChange={(event) =>
+                      updateUiPref("resumeConversationOnRefresh", event.target.checked)
+                    }
+                  />
+                  <span className="settings-toggle-body">
+                    <span className="settings-toggle-title">
+                      <RotateCcw size={14} aria-hidden />
+                      {t.resumeConversation}
+                    </span>
+                    <span className="settings-toggle-hint">{t.resumeConversationHint}</span>
+                  </span>
+                </label>
+                <label className="settings-toggle">
+                  <input
+                    type="checkbox"
+                    checked={uiPreferences.quickRepliesEnabled}
+                    onChange={(event) =>
+                      updateUiPref("quickRepliesEnabled", event.target.checked)
+                    }
+                  />
+                  <span className="settings-toggle-body">
+                    <span className="settings-toggle-title">
+                      <MessageSquareReply size={14} aria-hidden />
+                      {t.quickReplies}
+                    </span>
+                    <span className="settings-toggle-hint">{t.quickRepliesHint}</span>
+                  </span>
+                </label>
               </section>
 
               <section className="settings-section" aria-labelledby="settings-ai-heading">

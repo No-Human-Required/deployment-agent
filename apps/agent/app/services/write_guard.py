@@ -62,7 +62,19 @@ class LiaraProviderWrite:
                 read_only_root_filesystem=bool(
                     payload.get("readOnlyRootFilesystem", True)
                 ),
-                network=payload.get("network"),
+                network=(
+                    str(payload["network"])
+                    if payload.get("network") is not None
+                    else None
+                ),
+                bundle_plan_id=(
+                    str(payload.get("bundlePlanID") or payload.get("bundle_plan_id"))
+                    if (
+                        payload.get("bundlePlanID") is not None
+                        or payload.get("bundle_plan_id") is not None
+                    )
+                    else None
+                ),
             )
         if tool_id == "sources":
             return self._client.upload_source(
